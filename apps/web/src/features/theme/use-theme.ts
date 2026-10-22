@@ -6,8 +6,12 @@ export function useTheme() {
   const [theme, setTheme] = useState<ThemePreference>("system")
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("stillroom-theme")
-    if (isThemePreference(savedTheme)) setTheme(savedTheme)
+    try {
+      const savedTheme = window.localStorage.getItem("stillroom-theme")
+      if (isThemePreference(savedTheme)) setTheme(savedTheme)
+    } catch {
+      // Browser storage can be blocked; keep the current theme usable.
+    }
   }, [])
 
   useEffect(() => {
@@ -15,14 +19,16 @@ export function useTheme() {
     const apply = () => applyTheme(theme, media.matches)
     apply()
     media.addEventListener("change", apply)
-    window.localStorage.setItem("stillroom-theme", theme)
+    try {
+      window.localStorage.setItem("stillroom-theme", theme)
+    } catch {
+      // Theme changes still apply for this visit.
+    }
     return () => media.removeEventListener("change", apply)
   }, [theme])
 
   const toggleTheme = useCallback(() => {
-    setTheme((current) =>
-      resolveTheme(current) === "dark" ? "light" : "dark"
-    )
+    setTheme((current) => (resolveTheme(current) === "dark" ? "light" : "dark"))
   }, [])
 
   return { setTheme, theme, toggleTheme }

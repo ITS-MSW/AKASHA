@@ -1,84 +1,74 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-
+import { useCallback, useMemo, useRef, useState } from "react"
 import { toast } from "@heroui/react"
+
+import { useLocalStorage } from "@/hooks/use-local-storage"
+
+function parsePool(value: unknown): string[] | null {
+  if (value === null) return null
+  if (!Array.isArray(value) || !value.every((id) => typeof id === "string")) {
+    throw new Error("Invalid pool membership")
+  }
+  return [...new Set(value)]
+}
 
 export function useTemporaryPool(rootFolderId: string) {
   const storageWarningShown = useRef(false)
   const storageKey = `akasha:temporary-pool:${rootFolderId}`
-  const [pool, setPool] = useState<{ key: string; ids: string[] | null }>({
-    key: "",
-    ids: null,
+  const onStorageError = useCallback(() => {
+    if (storageWarningShown.current) return
+    storageWarningShown.current = true
+    toast.warning("Pool could not be saved in this browser", {
+      description: "Keep this tab open to retain your selections.",
+    })
+  }, [])
+  const [ids, setIds] = useLocalStorage<string[] | null>(storageKey, null, {
+    parse: parsePool,
+    migrateFromSession: true,
+    onError: onStorageError,
   })
-  const [isOpen, setIsOpen] = useState(false)
+  const [visibility, setVisibility] = useState({ key: "", isOpen: true })
+  const isOpen =
+    ids !== null && (visibility.key !== storageKey || visibility.isOpen)
 
-  useEffect(() => {
-    let ids: string[] | null = null
-    try {
-      const saved: unknown = JSON.parse(
-        sessionStorage.getItem(storageKey) ?? "null"
-      )
-      if (Array.isArray(saved) && saved.every((id) => typeof id === "string")) {
-        ids = [...new Set(saved)]
-      }
-    } catch {
-      // Storage may be unavailable; the pool still works for this page visit.
-    }
-    setPool({ key: storageKey, ids })
-    setIsOpen(ids !== null)
+  const open = useCallback(() => {
+    setVisibility({ key: storageKey, isOpen: true })
   }, [storageKey])
-
-  useEffect(() => {
-    if (pool.key !== storageKey) return
-    try {
-      if (pool.ids === null) sessionStorage.removeItem(storageKey)
-      else sessionStorage.setItem(storageKey, JSON.stringify(pool.ids))
-    } catch {
-      if (pool.ids !== null && !storageWarningShown.current) {
-        storageWarningShown.current = true
-        toast.warning("Pool will clear when you leave this page", {
-          description: "Your browser could not save this temporary pool.",
-        })
-      }
-    }
-  }, [pool, storageKey])
-
-  const toggleItem = useCallback((id: string) => {
-    setIsOpen(true)
-    setPool((current) => ({
-      ...current,
-      ids: current.ids?.includes(id)
-        ? current.ids.filter((itemId) => itemId !== id)
-        : [...(current.ids ?? []), id],
-    }))
-  }, [])
-  const addItems = useCallback((ids: string[]) => {
-    setPool((current) => ({
-      ...current,
-      ids: [...new Set([...(current.ids ?? []), ...ids])],
-    }))
-    setIsOpen(true)
-  }, [])
-  const itemIds = useMemo(
-    () => new Set(pool.key === storageKey ? (pool.ids ?? []) : []),
-    [pool, storageKey]
+  const toggleItem = useCallback(
+    (id: string) => {
+      setIds((current) =>
+        current?.includes(id)
+          ? current.filter((itemId) => itemId !== id)
+          : [...(current ?? []), id]
+      )
+      open()
+    },
+    [setIds, open]
   )
+  const addItems = useCallback(
+    (itemIds: string[]) => {
+      setIds((current) => [...new Set([...(current ?? []), ...itemIds])])
+      open()
+    },
+    [setIds, open]
+  )
+  const itemIds = useMemo(() => new Set(ids ?? []), [ids])
 
   return {
     itemIds,
-    isActive: pool.key === storageKey && pool.ids !== null,
-    isOpen: pool.key === storageKey && isOpen,
+    isActive: ids !== null,
+    isOpen,
     toggleItem,
     addItems,
     toggleOpen() {
-      setPool((current) => ({ key: storageKey, ids: current.ids ?? [] }))
-      setIsOpen((open) => !open)
+      setIds((current) => current ?? [])
+      setVisibility({ key: storageKey, isOpen: !isOpen })
     },
     close() {
-      setIsOpen(false)
+      setVisibility({ key: storageKey, isOpen: false })
     },
     dismiss() {
-      setPool({ key: storageKey, ids: null })
-      setIsOpen(false)
+      setIds(null)
+      setVisibility({ key: storageKey, isOpen: false })
     },
   }
 }
