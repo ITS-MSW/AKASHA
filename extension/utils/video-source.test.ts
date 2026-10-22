@@ -1,64 +1,65 @@
 import { describe, expect, it } from "vitest"
-
-import {
-  extractEmbeddedVideoUrls,
-  inferVideoMimeType,
-  resolveDownloadableVideoUrl,
-  resolveXStatusUrl,
-} from "./video-source"
+import { resolveDownloadableVideoUrl, resolveXStatusUrl } from "./video-source"
+import { collectXVideos, matchesSelectedXVideo } from "./x-video"
 
 describe("resolveDownloadableVideoUrl", () => {
-  it("replaces a blob player URL with an embedded Pinterest MP4", () => {
+  it("accepts only direct sources of the selected video", () => {
+    expect(resolveDownloadableVideoUrl({ currentSrc: "https://cdn.example.com/clip.webm" })).toBe(
+      "https://cdn.example.com/clip.webm"
+    )
+    expect(resolveDownloadableVideoUrl({ currentSrc: "blob:https://x.com/player" })).toBeUndefined()
     expect(
-      resolveDownloadableVideoUrl({
-        currentSrc: "blob:https://www.pinterest.com/player",
-        embeddedUrls: [
-          "https://v1.pinimg.com/videos/360p/example.mp4",
-          "https://v1.pinimg.com/videos/720p/example.mp4",
-        ],
-      })
-    ).toBe("https://v1.pinimg.com/videos/720p/example.mp4")
-  })
-
-  it("prefers a direct video source over unrelated page metadata", () => {
-    expect(
-      resolveDownloadableVideoUrl({
-        currentSrc: "https://cdn.example.com/clip.webm",
-        embeddedUrls: ["https://cdn.example.com/other.mp4"],
-      })
-    ).toBe("https://cdn.example.com/clip.webm")
-  })
-
-  it("prefers the embedded X post video over X interface animations", () => {
-    expect(
-      resolveDownloadableVideoUrl({
-        currentSrc: "blob:https://x.com/player",
-        embeddedUrls: [
-          "https://video.twimg.com/amplify_video/123/vid/avc1/1152x720/post.mp4?tag=29",
-        ],
-        performanceUrls: ["https://pbs.twimg.com/static/money/x-card-animation-v4.mp4"],
-      })
-    ).toBe("https://video.twimg.com/amplify_video/123/vid/avc1/1152x720/post.mp4?tag=29")
-  })
-
-  it("does not classify manifests or blob URLs as downloadable files", () => {
-    expect(
-      resolveDownloadableVideoUrl({
-        currentSrc: "blob:https://x.com/player",
-        performanceUrls: ["https://video.twimg.com/clip/master.m3u8"],
-      })
+      resolveDownloadableVideoUrl({ currentSrc: "https://video.twimg.com/master.m3u8" })
     ).toBeUndefined()
   })
-
-  it("rejects X interface animations as capture media", () => {
-    expect(
-      resolveDownloadableVideoUrl({
-        performanceUrls: [
-          "https://abs.twimg.com/videos/grok-4-key-visual.mp4",
-          "https://pbs.twimg.com/static/money/x-card-animation-v4.mp4",
+  it("keeps quoted and neighbouring post media separate", () => {
+    const post = (id: string) => ({
+      type: "video",
+      media_url_https: `https://pbs.twimg.com/amplify_video_thumb/${id}/img/poster.jpg`,
+      expanded_url: `https://x.com/author/status/${id}/video/1`,
+      video_info: {
+        variants: [
+          {
+            content_type: "application/x-mpegURL",
+            url: `https://video.twimg.com/${id}/master.m3u8`,
+          },
+          {
+            content_type: "video/mp4",
+            bitrate: 832000,
+            url: `https://video.twimg.com/amplify_video/${id}/vid/avc1/640x360/clip.mp4`,
+          },
         ],
-      })
-    ).toBeUndefined()
+      },
+    })
+    const records = collectXVideos({
+      tweet: post("123"),
+      quoted: post("456"),
+      neighbour: post("789"),
+      legacy: {
+        ...post("987"),
+        media_url_https: "https://pbs.twimg.com/tweet_video_thumb/Legacy_123.jpg",
+        video_info: {
+          variants: [
+            {
+              content_type: "video/mp4",
+              url: "https://video.twimg.com/tweet_video/Legacy_123.mp4",
+            },
+          ],
+        },
+      },
+    })
+    expect(records).toHaveLength(4)
+    for (const draft of records)
+      expect(matchesSelectedXVideo(draft, draft.pageUrl, draft.thumbnailUrl ?? "")).toBe(true)
+    expect(records[1]).toMatchObject({
+      pageUrl: "https://x.com/author/status/456",
+      videoVariants: [
+        {
+          url: "https://video.twimg.com/amplify_video/456/vid/avc1/640x360/clip.mp4",
+          bitrate: 832000,
+        },
+      ],
+    })
   })
 })
 
@@ -80,22 +81,33 @@ describe("resolveXStatusUrl", () => {
     expect(
       resolveXStatusUrl(["https://example.com/designer/status/1234567890"], "https://x.com/home")
     ).toBeUndefined()
-  })
-})
-
-describe("extractEmbeddedVideoUrls", () => {
-  it("extracts JSON-escaped video URLs", () => {
+    const draft = collectXVideos({
+      type: "video",
+      media_url_https: "https://pbs.twimg.com/tweet_video_thumb/Legacy_123.jpg",
+      expanded_url: "https://x.com/author/status/123/video/1",
+      video_info: {
+        variants: [
+          { content_type: "video/mp4", url: "https://video.twimg.com/tweet_video/Legacy_123.mp4" },
+        ],
+      },
+    })[0]
+    if (!draft) throw new Error("Expected legacy video draft")
+    for (const pageUrl of [
+      "https://evil.example/author/status/123",
+      "https://x.com/other/status/123",
+      "https://x.com/author/not-status/123",
+      "http://x.com/author/status/123",
+    ]) {
+      expect(
+        matchesSelectedXVideo({ ...draft, pageUrl }, draft.pageUrl, draft.thumbnailUrl ?? "")
+      ).toBe(false)
+    }
     expect(
-      extractEmbeddedVideoUrls(
-        String.raw`{"url":"https:\/\/v1.pinimg.com\/videos\/720p\/clip.mp4?token=a\u0026b=c"}`
+      matchesSelectedXVideo(
+        { ...draft, sourceUrl: "https://video.twimg.com/tweet_video/Other.mp4" },
+        draft.pageUrl,
+        draft.thumbnailUrl ?? ""
       )
-    ).toEqual(["https://v1.pinimg.com/videos/720p/clip.mp4?token=a&b=c"])
-  })
-})
-
-describe("inferVideoMimeType", () => {
-  it("recognizes WebM and defaults downloadable clips to MP4", () => {
-    expect(inferVideoMimeType("https://cdn.example.com/clip.webm")).toBe("video/webm")
-    expect(inferVideoMimeType("https://cdn.example.com/clip.mp4?token=1")).toBe("video/mp4")
+    ).toBe(false)
   })
 })

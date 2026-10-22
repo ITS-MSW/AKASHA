@@ -80,14 +80,14 @@ export function LibraryToolbar({
         <Tooltip delay={0}>
           <Button
             isIconOnly
-            aria-label="Upload images"
+            aria-label="Upload media"
             size="sm"
             variant="outline"
             onPress={onUpload}
           >
             <UploadSimpleIcon aria-hidden="true" />
           </Button>
-          <Tooltip.Content>Upload images</Tooltip.Content>
+          <Tooltip.Content>Upload media</Tooltip.Content>
         </Tooltip>
         {activeView === "all" ? (
           <LibraryFilterMenu

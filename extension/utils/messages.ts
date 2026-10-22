@@ -1,6 +1,7 @@
 import type { FolderOption } from "./akasha-api"
 
 export type ExtensionRequest =
+  | { type: "akasha:prepare-video"; draft: unknown }
   | { type: "akasha:connect" }
   | { type: "akasha:list-folders" }
   | {

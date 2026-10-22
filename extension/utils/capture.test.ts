@@ -24,7 +24,7 @@ describe("createCaptureDraft", () => {
     expect(createCaptureDraft({ pageUrl: "https://example.com" }, "Missing media")).toBeNull()
   })
 
-  it("rejects video captures while the capability is postponed", () => {
+  it("creates a binary video draft from a direct media URL", () => {
     expect(
       createCaptureDraft(
         {
@@ -34,6 +34,6 @@ describe("createCaptureDraft", () => {
         },
         "Micro interaction"
       )
-    ).toBeNull()
+    ).toMatchObject({ kind: "video", storageMode: "binary", thumbnailUrl: undefined })
   })
 })

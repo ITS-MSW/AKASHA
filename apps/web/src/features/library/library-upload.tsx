@@ -7,13 +7,24 @@ import {
   useState,
 } from "react"
 import { UploadSimpleIcon } from "@phosphor-icons/react"
-import { toast, Typography } from "@heroui/react"
+import { Button, toast, Typography } from "@heroui/react"
 import { DropZone, useDropZonePickerContext } from "@heroui-pro/react"
 import {
   libraryUploadMimeTypes,
   maximumLibraryUploadBytes,
+  maximumVideoUploadBytes,
+  videoUploadMimeTypes,
 } from "@akasha/contracts"
 import type { CaptureOutcome } from "@akasha/contracts"
+
+import { useLocalStorage } from "@/hooks/use-local-storage"
+import {
+  emptyPendingVideos,
+  parsePendingVideos,
+  reportUploadStorageError,
+  uploadVideo,
+} from "./video-upload"
+import type { PendingVideoUpload } from "./video-upload"
 
 const uploadConcurrency = 2
 
@@ -22,6 +33,7 @@ type UploadStatus =
 
 type UploadTask = {
   error?: string
+  resume?: PendingVideoUpload
   file: File
   folderId: string
   folderName: string
@@ -36,6 +48,7 @@ export type LibraryUploaderHandle = {
 }
 
 type LibraryUploaderProps = {
+  rootFolderId: string
   folderId: string
   folderName: string
   onRefresh: () => Promise<void>
@@ -44,8 +57,17 @@ type LibraryUploaderProps = {
 export const LibraryUploader = forwardRef<
   LibraryUploaderHandle,
   LibraryUploaderProps
->(function LibraryUploader({ folderId, folderName, onRefresh }, ref) {
+>(function LibraryUploader(
+  { rootFolderId, folderId, folderName, onRefresh },
+  ref
+) {
   const [tasks, setTasks] = useState<UploadTask[]>([])
+  const [pendingVideos, setPendingVideos] = useLocalStorage(
+    `akasha:video-uploads:${rootFolderId}`,
+    emptyPendingVideos,
+    { parse: parsePendingVideos, onError: reportUploadStorageError }
+  )
+  const resumeRef = useRef<PendingVideoUpload | null>(null)
   const batchChainRef = useRef(Promise.resolve())
   const openFilePickerRef = useRef<() => void>(() => undefined)
 
@@ -72,12 +94,30 @@ export const LibraryUploader = forwardRef<
         })
 
         try {
-          const outcome = await uploadLibraryImage(task, (progress, saving) => {
+          const onProgress = (progress: number, saving: boolean) => {
             updateTask(task.id, {
               progress,
               status: saving ? "saving" : "uploading",
             })
-          })
+          }
+          const outcome = task.file.type.startsWith("video/")
+            ? await uploadVideo(
+                task.file,
+                task,
+                (session) => {
+                  task.resume = session
+                  setPendingVideos((current) => [
+                    ...current.filter((item) => item.id !== session.id),
+                    session,
+                  ])
+                },
+                onProgress
+              )
+            : await uploadLibraryImage(task, onProgress)
+          if (task.resume)
+            setPendingVideos((current) =>
+              current.filter((item) => item.id !== task.resume!.id)
+            )
           if (outcome === "already_saved") {
             duplicateCount += 1
             updateTask(task.id, { progress: 100, status: "duplicate" })
@@ -91,7 +131,7 @@ export const LibraryUploader = forwardRef<
             error:
               error instanceof Error
                 ? error.message
-                : "Akasha could not upload this image.",
+                : "Akasha could not upload this file.",
             status: "failed",
           })
         }
@@ -99,15 +139,13 @@ export const LibraryUploader = forwardRef<
 
       if (savedCount > 0) {
         await onRefresh().catch(() => {
-          toast.warning(
-            "Upload complete. Refresh Akasha to see the new images."
-          )
+          toast.warning("Upload complete. Refresh Akasha to see the new files.")
         })
       }
 
       if (failedCount > 0) {
         toast.danger(formatFailureMessage(failedCount), {
-          description: "Failed images remain in the upload list.",
+          description: "Failed files remain in the upload list.",
         })
       } else if (savedCount > 0) {
         toast.success(
@@ -118,7 +156,7 @@ export const LibraryUploader = forwardRef<
         toast.info(formatDuplicateMessage(duplicateCount))
       }
     },
-    [onRefresh, updateTask]
+    [onRefresh, updateTask, setPendingVideos]
   )
 
   const queueBatch = useCallback(
@@ -135,7 +173,12 @@ export const LibraryUploader = forwardRef<
       const accepted: UploadTask[] = []
       const rejected: string[] = []
 
-      for (const [index, file] of files.entries()) {
+      const resume = resumeRef.current
+      resumeRef.current = null
+      for (const [index, file] of (resume
+        ? files.slice(0, 1)
+        : files
+      ).entries()) {
         const error = getFileValidationError(file)
         if (error) {
           rejected.push(`${file.name}: ${error}`)
@@ -144,9 +187,10 @@ export const LibraryUploader = forwardRef<
 
         accepted.push({
           file,
-          folderId,
-          folderName,
-          id: `${crypto.randomUUID()}-${index}`,
+          folderId: resume?.folderId ?? folderId,
+          folderName: resume?.folderName ?? folderName,
+          id: resume?.id ?? `${crypto.randomUUID()}-${index}`,
+          resume: resume ?? undefined,
           progress: 0,
           status: "queued",
         })
@@ -156,12 +200,17 @@ export const LibraryUploader = forwardRef<
         toast.danger(
           rejected.length === 1
             ? rejected[0]
-            : `${rejected.length} images could not be added.`
+            : `${rejected.length} files could not be added.`
         )
       }
       if (accepted.length === 0) return
 
-      setTasks((current) => [...accepted, ...current])
+      setTasks((current) => [
+        ...accepted,
+        ...current.filter(
+          (task) => !accepted.some((item) => item.id === task.id)
+        ),
+      ])
       queueBatch(accepted)
     },
     [folderId, folderName, queueBatch]
@@ -182,8 +231,14 @@ export const LibraryUploader = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      addFiles,
-      openFilePicker: () => openFilePickerRef.current(),
+      addFiles: (files) => {
+        resumeRef.current = null
+        addFiles(files)
+      },
+      openFilePicker: () => {
+        resumeRef.current = null
+        openFilePickerRef.current()
+      },
     }),
     [addFiles]
   )
@@ -216,13 +271,40 @@ export const LibraryUploader = forwardRef<
           onSelect={(files) => addFiles(Array.from(files))}
         />
       </DropZone>
-      {tasks.length > 0 ? (
+      {tasks.length > 0 || pendingVideos.length > 0 ? (
         <aside
           aria-label="Uploads"
           aria-live="polite"
           className="fixed right-4 bottom-4 z-40 grid max-h-[min(32rem,calc(100dvh-2rem))] w-[min(26rem,calc(100vw-2rem))] gap-3 overflow-auto rounded-2xl border border-border bg-surface p-3 shadow-overlay"
         >
           <Typography weight="semibold">Uploads</Typography>
+          {pendingVideos
+            .filter((item) => !tasks.some((task) => task.id === item.id))
+            .map((item) => (
+              <div key={item.id}>
+                <Typography>{item.fileName}</Typography>
+                <Button
+                  size="sm"
+                  onPress={() => {
+                    resumeRef.current = item
+                    openFilePickerRef.current()
+                  }}
+                >
+                  Select file to resume
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onPress={() =>
+                    setPendingVideos((current) =>
+                      current.filter((value) => value.id !== item.id)
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
           <DropZone>
             <DropZone.FileList>
               {tasks.map((task) => (
@@ -265,11 +347,14 @@ export const LibraryUploader = forwardRef<
                   {task.status === "failed" ? (
                     <DropZone.FileRemoveTrigger
                       aria-label={`Remove ${task.file.name}`}
-                      onPress={() =>
+                      onPress={() => {
                         setTasks((current) =>
                           current.filter((item) => item.id !== task.id)
                         )
-                      }
+                        setPendingVideos((current) =>
+                          current.filter((item) => item.id !== task.id)
+                        )
+                      }}
                     />
                   ) : null}
                 </DropZone.FileItem>
@@ -357,7 +442,7 @@ function UploadPicker({
 
   return (
     <DropZone.Input
-      accept={libraryUploadMimeTypes.join(",")}
+      accept={[...libraryUploadMimeTypes, ...videoUploadMimeTypes].join(",")}
       multiple
       onSelect={onSelect}
     />
@@ -394,9 +479,7 @@ function uploadLibraryImage(
         resolve(response.outcome)
         return
       }
-      reject(
-        new Error(response?.error ?? "Akasha could not upload this image.")
-      )
+      reject(new Error(response?.error ?? "Akasha could not upload this file."))
     })
     request.addEventListener("error", () =>
       reject(new Error("The upload was interrupted."))
@@ -410,13 +493,17 @@ function uploadLibraryImage(
 
 function getFileValidationError(file: File) {
   if (
-    !libraryUploadMimeTypes.includes(
+    ![...libraryUploadMimeTypes, ...videoUploadMimeTypes].includes(
       file.type as (typeof libraryUploadMimeTypes)[number]
     )
   ) {
-    return "Unsupported image format"
+    return "Unsupported file format"
   }
-  if (file.size === 0) return "Image is empty"
+  if (file.size === 0) return "File is empty"
+  if (file.type.startsWith("video/"))
+    return file.size > maximumVideoUploadBytes
+      ? "Video exceeds 50 MiB"
+      : undefined
   if (file.size > maximumLibraryUploadBytes) return "Image exceeds 20 MB"
   return undefined
 }
@@ -440,18 +527,18 @@ function hasDraggedFiles(dataTransfer: DataTransfer) {
 
 function formatSavedMessage(count: number, folderName: string) {
   return count === 1
-    ? `Image uploaded to ${folderName}.`
-    : `${count} images uploaded to ${folderName}.`
+    ? `File uploaded to ${folderName}.`
+    : `${count} files uploaded to ${folderName}.`
 }
 
 function formatDuplicateMessage(count: number) {
   return count === 1
-    ? "Image already exists in Akasha."
-    : `${count} images already exist in Akasha.`
+    ? "File already exists in Akasha."
+    : `${count} files already exist in Akasha.`
 }
 
 function formatFailureMessage(count: number) {
-  return count === 1 ? "Image upload failed." : `${count} image uploads failed.`
+  return count === 1 ? "File upload failed." : `${count} file uploads failed.`
 }
 
 async function runWithConcurrency<T>(

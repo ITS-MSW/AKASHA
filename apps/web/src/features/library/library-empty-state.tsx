@@ -29,7 +29,7 @@ export function LibraryEmptyState({
           <div className="flex flex-wrap justify-center gap-3">
             <Button variant="primary" onPress={onUpload}>
               <UploadSimpleIcon aria-hidden="true" />
-              Upload images
+              Upload media
             </Button>
             <NewFolderDialog
               onCreate={onCreateFolder}

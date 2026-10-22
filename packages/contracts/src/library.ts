@@ -7,6 +7,9 @@ export const libraryUploadMimeTypes = [
   "image/png",
   "image/webp",
 ] as const
+export const videoUploadMimeTypes = ["video/mp4", "video/webm"] as const
+export const maximumVideoUploadBytes = 50 * 1024 * 1024
+export const videoUploadChunkBytes = 1024 * 1024
 export const maximumLibraryUploadBytes = 20 * 1024 * 1024
 
 export const mediaKindSchema = z.enum(["image", "video"])
@@ -19,6 +22,10 @@ export const captureDraftSchema = z.object({
   storageMode: mediaStorageSchema.optional(),
   sourceUrl: z.url(),
   pageUrl: z.url(),
+  videoVariants: z
+    .array(z.object({ url: z.url(), bitrate: z.number().nonnegative() }))
+    .max(12)
+    .optional(),
   title: z.string().trim().min(1).max(240),
   thumbnailUrl: z.union([z.url(), z.string().startsWith("/")]).optional(),
   durationSeconds: z.number().nonnegative().optional(),

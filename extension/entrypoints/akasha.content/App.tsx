@@ -7,6 +7,7 @@ import {
   FolderIcon,
   ImageIcon,
   MagnifyingGlassIcon,
+  VideoCameraIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
@@ -168,7 +169,7 @@ export default function App({ onClose }: { onClose: () => void }) {
             <section className="connection-state">
               <div>
                 <h1>Connect Akasha</h1>
-                <p>Save images to your library.</p>
+                <p>Save media to your library.</p>
               </div>
               <button className="primary-button" onClick={handleConnect} type="button">
                 Connect Akasha
@@ -178,11 +179,11 @@ export default function App({ onClose }: { onClose: () => void }) {
             <>
               {selection.items.length > 1 ||
               selection.items.some((item) => item.captureId && selection.folderId) ? (
-                <section aria-label="Images to save" className="capture-selection dark">
+                <section aria-label="Media to save" className="capture-selection dark">
                   {selection.items.map(({ draft }, index) => (
                     <Checkbox
                       key={draft.sourceUrl}
-                      aria-label={`Select image ${index + 1}`}
+                      aria-label={`Select ${draft.kind} ${index + 1}`}
                       isSelected={selectedSources.has(draft.sourceUrl)}
                       isDisabled={saveStatus === "saving"}
                       onChange={(checked) =>
@@ -198,12 +199,16 @@ export default function App({ onClose }: { onClose: () => void }) {
                         <Checkbox.Control>
                           <Checkbox.Indicator />
                         </Checkbox.Control>
-                        <img
-                          alt=""
-                          src={draft.thumbnailUrl ?? draft.sourceUrl}
-                          width={48}
-                          height={48}
-                        />
+                        {draft.kind === "video" && !draft.thumbnailUrl ? (
+                          <VideoCameraIcon aria-hidden="true" size={48} />
+                        ) : (
+                          <img
+                            alt=""
+                            src={draft.thumbnailUrl ?? draft.sourceUrl}
+                            width={48}
+                            height={48}
+                          />
+                        )}
                       </Checkbox.Content>
                     </Checkbox>
                   ))}
@@ -240,7 +245,7 @@ export default function App({ onClose }: { onClose: () => void }) {
           ) : (
             <section className="empty-state">
               <ImageIcon aria-hidden="true" />
-              <p>Right-click an image to save it.</p>
+              <p>Right-click an image or video to save it.</p>
             </section>
           )}
 
@@ -446,6 +451,8 @@ function CapturePreview({ draft }: { draft: CaptureDraft }) {
       <div className="preview-media">
         {draft.thumbnailUrl ? (
           <img alt="" src={draft.thumbnailUrl} />
+        ) : draft.kind === "video" ? (
+          <VideoCameraIcon aria-hidden="true" />
         ) : (
           <ImageIcon aria-hidden="true" />
         )}

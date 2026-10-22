@@ -7,6 +7,7 @@ import {
   setExtensionCredentialHeader,
 } from "@/server/auth/extension-auth.server"
 import type { GoogleTokenCredentials } from "@/server/auth/google-oauth.server"
+import { assertLibraryUploadDestination } from "@/server/drive/library-upload.server"
 import { CaptureSourceError, saveCapture } from "@/server/drive/drive.server"
 
 export const Route = createFileRoute("/api/extension/captures")({
@@ -50,15 +51,16 @@ export const Route = createFileRoute("/api/extension/captures")({
           )
         }
 
-        if (captureResult.data.kind !== "image" || requestInput?.media) {
+        if (requestInput?.media) {
           return Response.json(
-            { error: "Video capture is currently unavailable." },
+            { error: "Send a downloadable media URL." },
             { headers, status: 422 }
           )
         }
 
         try {
           const capture = captureResult.data
+          await assertLibraryUploadDestination(credentials, capture.folderId)
           const options = {
             attempt: capture.attempt,
             captureId: capture.captureId,

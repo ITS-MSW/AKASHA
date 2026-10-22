@@ -113,7 +113,12 @@ export function mapDriveFileToLibraryItem(
   folderId: string,
   thumbnailContext?: ThumbnailContext
 ) {
-  if (file.appProperties?.stillroomType === "poster") return null
+  if (
+    ["poster", "upload_pending"].includes(
+      file.appProperties?.stillroomType ?? ""
+    )
+  )
+    return null
 
   const captureMetadata = parseCaptureMetadata(file.description)
   const sourceUrl = captureMetadata.sourceUrl ?? file.webViewLink
