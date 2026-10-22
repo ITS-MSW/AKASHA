@@ -1,4 +1,11 @@
-import { memo, useEffect, useRef, useState } from "react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react"
 import {
   ArrowLeftIcon,
   StackPlusIcon,
@@ -15,6 +22,7 @@ import {
 } from "@phosphor-icons/react"
 import { Button, Checkbox, Label, Modal, Typography } from "@heroui/react"
 import { ContextMenu } from "@heroui-pro/react"
+import type { RefObject } from "react"
 import type { LibraryItem } from "@akasha/contracts"
 
 const PRIORITY_IMAGE_COUNT = 2
@@ -338,6 +346,11 @@ function downloadImage(item: LibraryItem) {
   link.click()
 }
 
+type InspectionState = {
+  pointer: { x: number; y: number } | null
+  modifierHeld: boolean
+}
+
 type MediaLightboxProps = {
   activeIndex: number | null
   items: LibraryItem[]
@@ -349,6 +362,10 @@ function MediaLightbox({
   items,
   onActiveIndexChange,
 }: MediaLightboxProps) {
+  const inspection = useRef<InspectionState>({
+    pointer: null,
+    modifierHeld: false,
+  })
   const [scale, setScale] = useState(1)
   const currentIndex = activeIndex ?? 0
   const activeItem = activeIndex === null ? null : (items[activeIndex] ?? null)
@@ -360,9 +377,18 @@ function MediaLightbox({
   }, [activeIndex])
 
   useEffect(() => {
-    if (activeIndex === null) return
-
+    if (activeIndex === null) {
+      inspection.current = { pointer: null, modifierHeld: false }
+      return
+    }
+    function onModifierChange(event: KeyboardEvent) {
+      inspection.current.modifierHeld = event.altKey || event.shiftKey
+    }
+    function onBlur() {
+      inspection.current.modifierHeld = false
+    }
     function onKeyDown(event: KeyboardEvent) {
+      onModifierChange(event)
       if (event.key === "ArrowLeft" && currentIndex > 0) {
         event.preventDefault()
         onActiveIndexChange(currentIndex - 1)
@@ -374,7 +400,13 @@ function MediaLightbox({
     }
 
     window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
+    window.addEventListener("keyup", onModifierChange)
+    window.addEventListener("blur", onBlur)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown)
+      window.removeEventListener("keyup", onModifierChange)
+      window.removeEventListener("blur", onBlur)
+    }
   }, [activeIndex, currentIndex, items.length, onActiveIndexChange])
 
   return (
@@ -449,7 +481,18 @@ function MediaLightbox({
                   <ArrowRightIcon aria-hidden="true" />
                 </Button>
               </div>
-              <div className="grid min-h-0 place-items-center overflow-auto overscroll-contain p-4">
+              <div
+                className="grid min-h-0 place-items-center overflow-auto overscroll-contain p-4"
+                onPointerLeave={() => {
+                  inspection.current.pointer = null
+                }}
+                onPointerMoveCapture={(event) => {
+                  inspection.current = {
+                    pointer: { x: event.clientX, y: event.clientY },
+                    modifierHeld: event.altKey || event.shiftKey,
+                  }
+                }}
+              >
                 {activeItem.kind === "video" ? (
                   activeItem.storageMode !== "reference" ? (
                     <video
@@ -485,8 +528,8 @@ function MediaLightbox({
                 ) : (
                   <ProgressiveImage
                     item={activeItem}
-                    key={activeItem.id}
                     scale={scale}
+                    inspection={inspection}
                   />
                 )}
               </div>
@@ -501,84 +544,111 @@ function MediaLightbox({
 function ProgressiveImage({
   item,
   scale,
+  inspection,
 }: {
   item: LibraryItem
   scale: number
+  inspection: RefObject<InspectionState>
 }) {
-  const [hasOriginalError, setHasOriginalError] = useState(false)
-  const [hasPreviewError, setHasPreviewError] = useState(false)
-  const [isModifierHeld, setIsModifierHeld] = useState(false)
+  const [isModifierHeld, setIsModifierHeld] = useState(
+    inspection.current.modifierHeld
+  )
   const [isPointerInside, setIsPointerInside] = useState(false)
   const zoomFrame = useRef<HTMLDivElement | null>(null)
-  const zoomBounds = useRef<DOMRect | null>(null)
-  const originalUrl = `/api/media/${encodeURIComponent(item.driveFileId)}`
+  const zoomContent = useRef<HTMLDivElement | null>(null)
   const isInspecting = isModifierHeld && isPointerInside
+
+  const refreshOrigin = useCallback(() => {
+    const pointer = inspection.current.pointer
+    if (!pointer) {
+      setIsPointerInside(false)
+      return
+    }
+    if (!zoomFrame.current || !zoomContent.current) return
+    const bounds = zoomFrame.current.getBoundingClientRect()
+    const { x, y } = pointer
+    setIsPointerInside(
+      bounds.width > 0 &&
+        bounds.height > 0 &&
+        x >= bounds.left &&
+        x <= bounds.right &&
+        y >= bounds.top &&
+        y <= bounds.bottom
+    )
+    updateZoomOrigin(zoomContent.current, bounds, x, y)
+  }, [inspection])
+
+  useLayoutEffect(refreshOrigin, [item.id, refreshOrigin])
 
   useEffect(() => {
     function onModifierChange(event: KeyboardEvent) {
-      if (event.key === "Alt" || event.key === "Shift") {
-        const isHeld =
-          event.type === "keydown" || event.altKey || event.shiftKey
-        setIsModifierHeld(isHeld)
-        if (isHeld) {
-          setIsPointerInside(
-            (current) =>
-              current || Boolean(zoomFrame.current?.matches(":hover"))
-          )
-        }
-      }
+      setIsModifierHeld(event.altKey || event.shiftKey)
+      refreshOrigin()
     }
-
     function onBlur() {
       setIsModifierHeld(false)
     }
-
+    const observer = new ResizeObserver(refreshOrigin)
+    if (zoomFrame.current) observer.observe(zoomFrame.current)
     window.addEventListener("keydown", onModifierChange)
     window.addEventListener("keyup", onModifierChange)
     window.addEventListener("blur", onBlur)
+    window.addEventListener("resize", refreshOrigin)
+    window.addEventListener("scroll", refreshOrigin, true)
     return () => {
+      observer.disconnect()
       window.removeEventListener("keydown", onModifierChange)
       window.removeEventListener("keyup", onModifierChange)
       window.removeEventListener("blur", onBlur)
+      window.removeEventListener("resize", refreshOrigin)
+      window.removeEventListener("scroll", refreshOrigin, true)
     }
-  }, [])
+  }, [refreshOrigin])
+
+  function trackPointer(event: React.PointerEvent<HTMLDivElement>) {
+    inspection.current.pointer = { x: event.clientX, y: event.clientY }
+    setIsModifierHeld(event.altKey || event.shiftKey)
+    refreshOrigin()
+  }
 
   return (
     <div
-      className={`grid place-items-center transition-transform motion-reduce:transition-none ${isInspecting ? "cursor-zoom-in" : ""}`}
+      className="grid max-w-full min-w-0 place-items-center"
       ref={zoomFrame}
-      onPointerEnter={(event) => {
-        zoomBounds.current = event.currentTarget.getBoundingClientRect()
-        setIsPointerInside(true)
-        setIsModifierHeld(event.altKey || event.shiftKey)
-        updateZoomOrigin(
-          event.currentTarget,
-          zoomBounds.current,
-          event.clientX,
-          event.clientY
-        )
-      }}
-      onPointerLeave={() => setIsPointerInside(false)}
-      onPointerMove={(event) => {
-        setIsModifierHeld(event.altKey || event.shiftKey)
-        if (zoomBounds.current) {
-          updateZoomOrigin(
-            event.currentTarget,
-            zoomBounds.current,
-            event.clientX,
-            event.clientY
-          )
-        }
-      }}
-      style={{
-        transform: `scale(${isInspecting ? Math.max(2, scale) : scale})`,
-        transformOrigin: isInspecting ? "var(--zoom-origin, center)" : "center",
+      onPointerEnter={trackPointer}
+      onPointerMove={trackPointer}
+      onPointerLeave={() => {
+        inspection.current.pointer = null
+        setIsPointerInside(false)
       }}
     >
+      <div
+        className={`grid place-items-center transition-transform motion-reduce:transition-none ${isInspecting ? "cursor-zoom-in" : ""}`}
+        ref={zoomContent}
+        style={{
+          transform: `scale(${isInspecting ? Math.max(2, scale) : scale})`,
+          transformOrigin: isInspecting
+            ? "var(--zoom-origin, center)"
+            : "center",
+        }}
+      >
+        <PreviewImage item={item} key={item.id} />
+      </div>
+    </div>
+  )
+}
+
+function PreviewImage({ item }: { item: LibraryItem }) {
+  const [hasOriginalError, setHasOriginalError] = useState(false)
+  const [hasPreviewError, setHasPreviewError] = useState(false)
+  const originalUrl = `/api/media/${encodeURIComponent(item.driveFileId)}`
+
+  return (
+    <>
       {item.thumbnailUrl && !hasPreviewError ? (
         <img
           alt=""
-          className="block max-h-[calc(100dvh-6rem)] max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
+          className="block h-auto w-auto max-h-[calc(100dvh-6rem)] max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
           decoding="async"
           height={item.height}
           onError={() => setHasPreviewError(true)}
@@ -593,7 +663,7 @@ function ProgressiveImage({
       {!hasOriginalError ? (
         <img
           alt={item.title}
-          className="block max-h-[calc(100dvh-6rem)] max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
+          className="block h-auto w-auto max-h-[calc(100dvh-6rem)] max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
           decoding="async"
           fetchPriority="high"
           height={item.height}
@@ -602,7 +672,7 @@ function ProgressiveImage({
           width={item.width}
         />
       ) : null}
-    </div>
+    </>
   )
 }
 
