@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
-import {
-  applyTheme,
-  isThemePreference,
-  resolveTheme,
-  type ThemePreference,
-} from "./theme"
+import { applyTheme, isThemePreference, resolveTheme } from "./theme"
+import type { ThemePreference } from "./theme"
 
 export function useTheme() {
   const [theme, setTheme] = useState<ThemePreference>("system")

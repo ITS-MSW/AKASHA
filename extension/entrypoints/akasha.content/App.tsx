@@ -321,7 +321,9 @@ function FolderCombobox({
             <MagnifyingGlassIcon aria-hidden="true" className="folder-trailing-icon" />
           )}
           <button
-            aria-label={isOpen ? "Close folder list" : `Open folder list, ${filtered.length} folders`}
+            aria-label={
+              isOpen ? "Close folder list" : `Open folder list, ${filtered.length} folders`
+            }
             className="folder-toggle"
             onClick={() => onOpenChange(!isOpen)}
             tabIndex={-1}
@@ -333,36 +335,31 @@ function FolderCombobox({
         {isOpen ? (
           <div className="folder-options">
             {filtered.length === 0 ? (
-              <p className="folder-empty">
-                No folders match “{query.trim()}”
-              </p>
+              <p className="folder-empty">No folders match “{query.trim()}”</p>
             ) : (
-              <ul aria-labelledby={labelId} id={listId} role="listbox">
+              <div aria-labelledby={labelId} id={listId} role="listbox" tabIndex={-1}>
                 {filtered.map((folder, index) => {
                   const isSelected = folder.id === selectedFolderId
                   const isActive = index === activeIndex
                   return (
-                    <li
+                    <button
                       aria-selected={isSelected}
                       className={isActive ? "folder-option-active" : undefined}
                       id={`${listId}-${folder.id}`}
                       key={folder.id}
                       role="option"
+                      onClick={() => selectFolder(folder.id)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      style={{ paddingInlineStart: `${12 + folder.depth * 18}px` }}
+                      tabIndex={-1}
+                      type="button"
                     >
-                      <button
-                        onClick={() => selectFolder(folder.id)}
-                        onMouseEnter={() => setActiveIndex(index)}
-                        style={{ paddingInlineStart: `${12 + folder.depth * 18}px` }}
-                        tabIndex={-1}
-                        type="button"
-                      >
-                        <FolderMatch label={folder.label} query={normalizedQuery} />
-                        {isSelected ? <CheckIcon aria-hidden="true" /> : null}
-                      </button>
-                    </li>
+                      <FolderMatch label={folder.label} query={normalizedQuery} />
+                      {isSelected ? <CheckIcon aria-hidden="true" /> : null}
+                    </button>
                   )
                 })}
-              </ul>
+              </div>
             )}
           </div>
         ) : null}

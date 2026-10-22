@@ -322,17 +322,17 @@ p {
   height: 0;
 }
 
-.folder-options ul {
+.folder-options [role="listbox"] {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.folder-options li {
+.folder-options [role="option"] {
   border-radius: 8px;
 }
 
-.folder-options li.folder-option-active {
+.folder-options .folder-option-active {
   background: color-mix(in oklch, var(--akasha-accent), transparent 84%);
 }
 
