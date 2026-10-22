@@ -20,10 +20,15 @@ import {
   PlayIcon,
   TrashIcon,
 } from "@phosphor-icons/react"
-import { Button, Checkbox, Label, Modal, Typography } from "@heroui/react"
+import { Button, Checkbox, Kbd, Label, Modal, Typography } from "@heroui/react"
 import { ContextMenu } from "@heroui-pro/react"
 import type { RefObject } from "react"
 import type { LibraryItem } from "@akasha/contracts"
+
+import {
+  isEditingTarget,
+  shouldSkipKeyboardEvent,
+} from "./use-library-keyboard-shortcuts"
 
 const PRIORITY_IMAGE_COUNT = 2
 const ORIGINAL_PREFETCH_DELAY_MS = 150
@@ -32,6 +37,7 @@ type MediaGalleryProps = {
   poolMode?: boolean
   poolItemIds?: ReadonlySet<string>
   onTogglePool?: (itemId: string) => void
+  onAddToPool?: (itemIds: string[]) => void
   showPoolControls?: boolean
   emptyMessage?: string
   isSelectionMode: boolean
@@ -47,6 +53,7 @@ export const MediaGallery = memo(function MediaGallery({
   poolMode = false,
   poolItemIds,
   onTogglePool,
+  onAddToPool,
   showPoolControls = false,
   emptyMessage = "No media here yet.",
   isSelectionMode,
@@ -97,6 +104,8 @@ export const MediaGallery = memo(function MediaGallery({
         activeIndex={activeIndex}
         items={items}
         onActiveIndexChange={setActiveIndex}
+        onAddToPool={onAddToPool}
+        poolItemIds={poolItemIds}
       />
     </>
   )
@@ -352,6 +361,8 @@ type InspectionState = {
 }
 
 type MediaLightboxProps = {
+  onAddToPool?: (itemIds: string[]) => void
+  poolItemIds?: ReadonlySet<string>
   activeIndex: number | null
   items: LibraryItem[]
   onActiveIndexChange: (index: number | null) => void
@@ -361,14 +372,18 @@ function MediaLightbox({
   activeIndex,
   items,
   onActiveIndexChange,
+  onAddToPool,
+  poolItemIds,
 }: MediaLightboxProps) {
   const inspection = useRef<InspectionState>({
     pointer: null,
     modifierHeld: false,
   })
+  const dialogRef = useRef<HTMLDivElement | null>(null)
   const [scale, setScale] = useState(1)
   const currentIndex = activeIndex ?? 0
   const activeItem = activeIndex === null ? null : (items[activeIndex] ?? null)
+  const inPool = activeItem ? (poolItemIds?.has(activeItem.id) ?? false) : false
   const canGoBack = activeIndex !== null && activeIndex > 0
   const canGoForward = activeIndex !== null && activeIndex < items.length - 1
 
@@ -389,6 +404,28 @@ function MediaLightbox({
     }
     function onKeyDown(event: KeyboardEvent) {
       onModifierChange(event)
+      if (event.key.toLowerCase() === "p") {
+        if (
+          !activeItem ||
+          !onAddToPool ||
+          inPool ||
+          shouldSkipKeyboardEvent(event) ||
+          isEditingTarget(event.target) ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey
+        )
+          return
+        const dialogs = Array.from(
+          document.querySelectorAll('[role="dialog"], [role="alertdialog"]')
+        ).filter((dialog) => !dialog.closest('[aria-hidden="true"], [inert]'))
+        if (dialogs.at(-1) !== dialogRef.current?.closest('[role="dialog"]'))
+          return
+        event.preventDefault()
+        onAddToPool([activeItem.id])
+        return
+      }
       if (event.key === "ArrowLeft" && currentIndex > 0) {
         event.preventDefault()
         onActiveIndexChange(currentIndex - 1)
@@ -407,7 +444,15 @@ function MediaLightbox({
       window.removeEventListener("keyup", onModifierChange)
       window.removeEventListener("blur", onBlur)
     }
-  }, [activeIndex, currentIndex, items.length, onActiveIndexChange])
+  }, [
+    activeIndex,
+    currentIndex,
+    items.length,
+    onActiveIndexChange,
+    activeItem,
+    onAddToPool,
+    inPool,
+  ])
 
   return (
     <Modal.Backdrop
@@ -420,8 +465,11 @@ function MediaLightbox({
         <Modal.Dialog aria-label={activeItem?.title ?? "Media preview"}>
           <Modal.CloseTrigger />
           {activeItem ? (
-            <div className="grid min-h-dvh grid-rows-[auto_minmax(0,1fr)] bg-background">
-              <div className="flex items-center justify-center gap-2 p-3">
+            <div
+              ref={dialogRef}
+              className="grid min-h-dvh grid-rows-[auto_minmax(0,1fr)] bg-background"
+            >
+              <div className="flex flex-wrap items-center justify-center gap-2 p-3">
                 <Button
                   aria-label="Previous media"
                   isDisabled={!canGoBack}
@@ -433,6 +481,20 @@ function MediaLightbox({
                 >
                   <ArrowLeftIcon aria-hidden="true" />
                 </Button>
+                {onAddToPool ? (
+                  <Button
+                    isDisabled={inPool}
+                    variant="tertiary"
+                    aria-label={inPool ? "Added to pool" : "Add to pool"}
+                    onPress={() => onAddToPool([activeItem.id])}
+                  >
+                    <StackPlusIcon aria-hidden="true" />
+                    {inPool ? "Added" : "Add to pool"}
+                    <Kbd>
+                      <Kbd.Content>P</Kbd.Content>
+                    </Kbd>
+                  </Button>
+                ) : null}
                 {activeItem.kind === "image" ? (
                   <>
                     <Button

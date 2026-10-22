@@ -207,6 +207,91 @@ describe("LibraryPage", () => {
     ).toBeNull()
   })
 
+  it("adds the active preview to the pool with P or its action without closing", () => {
+    const snapshot = {
+      folders: [],
+      rootFolderId: "root",
+      items: [
+        createLibraryItem("one", "First asset"),
+        { ...createLibraryItem("two", "Second asset"), kind: "video" as const },
+      ],
+    }
+    render(<LibraryPage initialSnapshot={snapshot} />)
+    fireEvent.click(screen.getByRole("button", { name: "Open First asset" }))
+    fireEvent.keyDown(window, { key: "p" })
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one"])
+    expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe(
+      "First asset"
+    )
+    expect(
+      screen
+        .getByRole("button", { name: "Added to pool" })
+        .hasAttribute("disabled")
+    ).toBe(true)
+    fireEvent.keyDown(window, { key: "p" })
+    fireEvent.keyDown(window, { key: "ArrowRight" })
+    fireEvent.click(screen.getByRole("button", { name: "Add to pool" }))
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one", "two"])
+    expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe(
+      "Second asset"
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    fireEvent.click(
+      within(screen.getByRole("complementary")).getByRole("button", {
+        name: "Open First asset",
+      })
+    )
+    fireEvent.keyDown(window, { key: "p" })
+    expect(screen.getByRole("button", { name: "Added to pool" })).toBeTruthy()
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one", "two"])
+  })
+
+  it("ignores pool shortcuts outside preview, while typing, or beneath another dialog", () => {
+    render(
+      <LibraryPage
+        initialSnapshot={{
+          folders: [],
+          rootFolderId: "root",
+          items: [createLibraryItem("one", "First asset")],
+        }}
+      />
+    )
+    fireEvent.keyDown(window, { key: "p" })
+    expect(localStorage.getItem("akasha:temporary-pool:root")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Open First asset" }))
+    const dialog = screen.getByRole("dialog")
+    const input = document.createElement("input")
+    dialog.append(input)
+    fireEvent.keyDown(input, { key: "p" })
+    input.remove()
+    for (const modifier of [
+      "ctrlKey",
+      "altKey",
+      "metaKey",
+      "shiftKey",
+      "repeat",
+      "isComposing",
+    ]) {
+      fireEvent.keyDown(window, { key: "p", [modifier]: true })
+    }
+    const other = document.createElement("div")
+    other.setAttribute("role", "dialog")
+    document.body.append(other)
+    fireEvent.keyDown(window, { key: "p" })
+    other.remove()
+    expect(localStorage.getItem("akasha:temporary-pool:root")).toBeNull()
+    fireEvent.keyDown(window, { key: "p" })
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one"])
+  })
+
   it("shows an empty library with a first-folder action", () => {
     render(
       <LibraryPage

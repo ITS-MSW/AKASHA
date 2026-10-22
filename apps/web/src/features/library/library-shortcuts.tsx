@@ -45,6 +45,11 @@ export function LibraryShortcuts() {
                 <Kbd.Content>U</Kbd.Content>
               </Kbd>
             </Shortcut>
+            <Shortcut label="Add preview to pool">
+              <Kbd>
+                <Kbd.Content>P</Kbd.Content>
+              </Kbd>
+            </Shortcut>
             <Shortcut label="Select multiple assets">
               <Kbd>
                 <Kbd.Content>M</Kbd.Content>

@@ -332,6 +332,7 @@ export function LibraryPage({
       <MediaGallery
         poolItemIds={pool.itemIds}
         onTogglePool={pool.toggleItem}
+        onAddToPool={pool.addItems}
         showPoolControls={pool.isActive}
         isSelectionMode={isSelectionMode}
         items={filteredItems}
@@ -450,6 +451,7 @@ export function LibraryPage({
                       poolMode
                       poolItemIds={pool.itemIds}
                       onTogglePool={pool.toggleItem}
+                      onAddToPool={pool.addItems}
                       isSelectionMode={false}
                       items={poolItems}
                       onMoveItem={openMoveItem}
