@@ -1,4 +1,5 @@
-import { useSession } from "@tanstack/react-start/server"
+import { appendResponseHeader, getRequest } from "@tanstack/react-start/server"
+import { H3Event, useSession } from "h3"
 
 import { getSessionSecret } from "../env.server"
 import { getGoogleAccessToken } from "./google-oauth.server"
@@ -11,8 +12,14 @@ export type StillroomSessionData = {
   oauthState?: string
 }
 
-export function useStillroomSession() {
-  return useSession<StillroomSessionData>({
+// Keep the existing H3 cookie format when upgrading past Start's session API.
+const sessionEvents = new WeakMap<Request, H3Event>()
+
+export async function useStillroomSession() {
+  const request = getRequest()
+  const event = sessionEvents.get(request) ?? new H3Event(request)
+  sessionEvents.set(request, event)
+  const session = await useSession<StillroomSessionData>(event, {
     maxAge: 90 * 24 * 60 * 60,
     name: "stillroom-session",
     password: getSessionSecret(),
@@ -22,6 +29,28 @@ export function useStillroomSession() {
       secure: process.env.NODE_ENV === "production",
     },
   })
+
+  function flushCookies() {
+    for (const cookie of event.res.headers.getSetCookie()) {
+      appendResponseHeader("set-cookie", cookie)
+    }
+    event.res.headers.delete("set-cookie")
+  }
+
+  flushCookies()
+  return {
+    get data() {
+      return session.data
+    },
+    async update(data: StillroomSessionData) {
+      await session.update(data)
+      flushCookies()
+    },
+    async clear() {
+      await session.clear()
+      flushCookies()
+    },
+  }
 }
 
 export async function getSessionGoogleCredentials(
