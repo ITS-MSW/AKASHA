@@ -1,3 +1,9 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "@heroui/styles/themes/default";
+@import "@heroui/styles/utilities";
+@import "@heroui/styles/components/checkbox.css" layer(components);
+
 :host {
   color-scheme: light dark;
   -webkit-font-smoothing: antialiased;
@@ -488,4 +494,16 @@ p {
   .folder-options button {
     transition-duration: 0.01ms;
   }
+}
+
+.capture-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.capture-selection img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
 }

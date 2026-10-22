@@ -73,7 +73,12 @@ function normalizeVideoUrl(value: string) {
 }
 
 function isXHostname(hostname: string) {
-  return hostname === "x.com" || hostname === "www.x.com" || hostname.endsWith(".twitter.com")
+  return (
+    hostname === "x.com" ||
+    hostname === "www.x.com" ||
+    hostname === "twitter.com" ||
+    hostname.endsWith(".twitter.com")
+  )
 }
 
 function getQualityScore(value: string) {

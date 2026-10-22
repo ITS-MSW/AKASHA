@@ -1,4 +1,5 @@
 import type { CaptureDraft } from "@akasha/contracts"
+import { Checkbox } from "@heroui/react"
 import {
   ArrowClockwiseIcon,
   CaretDownIcon,
@@ -10,13 +11,15 @@ import {
 } from "@phosphor-icons/react"
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import type { FolderOption } from "@/utils/akasha-api"
+import { type CaptureSelection, toCaptureSelection } from "@/utils/capture"
 import { connectLibrary, getFolderOptions, saveLibraryCapture } from "@/utils/messages"
 import { captureDraftStorage, selectedFolderStorage } from "@/utils/storage"
 
 type SaveStatus = "idle" | "saving"
 
 export default function App({ onClose }: { onClose: () => void }) {
-  const [draft, setDraft] = useState<CaptureDraft | null>(null)
+  const [selection, setSelection] = useState<CaptureSelection | null>(null)
+  const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
   const [folders, setFolders] = useState<FolderOption[]>([])
   const [selectedFolderId, setSelectedFolderId] = useState("")
   const [isConnected, setIsConnected] = useState(false)
@@ -44,11 +47,14 @@ export default function App({ onClose }: { onClose: () => void }) {
         captureDraftStorage.getValue(),
         selectedFolderStorage.getValue(),
       ])
-      setDraft(storedDraft?.kind === "image" ? storedDraft : null)
+      const next = toCaptureSelection(storedDraft)
+      setSelection(next)
+      setErrorMessage(next?.errorMessage ?? null)
+      setSelectedSources(new Set(next?.items.map((item) => item.draft.sourceUrl)))
 
       try {
         const availableFolders = await getFolderOptions()
-        applyFolders(availableFolders, storedFolderId)
+        applyFolders(availableFolders, next?.folderId ?? storedFolderId)
         setIsConnected(true)
       } catch {
         setIsConnected(false)
@@ -59,9 +65,12 @@ export default function App({ onClose }: { onClose: () => void }) {
 
     void initialize()
     return captureDraftStorage.watch((nextDraft) => {
-      setDraft(nextDraft?.kind === "image" ? nextDraft : null)
+      const next = toCaptureSelection(nextDraft)
+      setSelection(next)
+      setErrorMessage(next?.errorMessage ?? null)
+      setSelectedSources(new Set(next?.items.map((item) => item.draft.sourceUrl)))
+      if (next?.folderId) setSelectedFolderId(next.folderId)
       setSaveStatus("idle")
-      setErrorMessage(null)
     })
   }, [applyFolders])
 
@@ -97,7 +106,10 @@ export default function App({ onClose }: { onClose: () => void }) {
 
     try {
       const availableFolders = await connectLibrary()
-      applyFolders(availableFolders, await selectedFolderStorage.getValue())
+      applyFolders(
+        availableFolders,
+        selection?.folderId ?? (await selectedFolderStorage.getValue())
+      )
       setIsConnected(true)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Akasha could not connect.")
@@ -107,13 +119,13 @@ export default function App({ onClose }: { onClose: () => void }) {
   }
 
   async function handleSave() {
-    if (!draft || !selectedFolderId) return
+    if (!selection || !selectedFolderId || !selectedSources.size) return
 
     setSaveStatus("saving")
     setErrorMessage(null)
 
     try {
-      await saveLibraryCapture(draft, selectedFolderId)
+      await saveLibraryCapture(selection.id, [...selectedSources], selectedFolderId)
       onClose()
     } catch (error) {
       setSaveStatus("idle")
@@ -162,9 +174,43 @@ export default function App({ onClose }: { onClose: () => void }) {
                 Connect Akasha
               </button>
             </section>
-          ) : draft ? (
+          ) : selection?.items.length ? (
             <>
-              <CapturePreview draft={draft} />
+              {selection.items.length > 1 ||
+              selection.items.some((item) => item.captureId && selection.folderId) ? (
+                <section aria-label="Images to save" className="capture-selection dark">
+                  {selection.items.map(({ draft }, index) => (
+                    <Checkbox
+                      key={draft.sourceUrl}
+                      aria-label={`Select image ${index + 1}`}
+                      isSelected={selectedSources.has(draft.sourceUrl)}
+                      isDisabled={saveStatus === "saving"}
+                      onChange={(checked) =>
+                        setSelectedSources((current) => {
+                          const next = new Set(current)
+                          if (checked) next.add(draft.sourceUrl)
+                          else next.delete(draft.sourceUrl)
+                          return next
+                        })
+                      }
+                    >
+                      <Checkbox.Content>
+                        <Checkbox.Control>
+                          <Checkbox.Indicator />
+                        </Checkbox.Control>
+                        <img
+                          alt=""
+                          src={draft.thumbnailUrl ?? draft.sourceUrl}
+                          width={48}
+                          height={48}
+                        />
+                      </Checkbox.Content>
+                    </Checkbox>
+                  ))}
+                </section>
+              ) : selection.items[0] ? (
+                <CapturePreview draft={selection.items[0].draft} />
+              ) : null}
               <FolderCombobox
                 comboboxRef={comboboxRef}
                 folders={folders}
@@ -175,14 +221,20 @@ export default function App({ onClose }: { onClose: () => void }) {
               />
               <button
                 className="primary-button"
-                disabled={!selectedFolderId || saveStatus === "saving"}
+                disabled={!selectedFolderId || !selectedSources.size || saveStatus === "saving"}
                 onClick={handleSave}
                 type="button"
               >
                 {saveStatus === "saving" ? (
                   <ArrowClockwiseIcon aria-hidden="true" className="spin" />
                 ) : null}
-                {saveStatus === "saving" ? "Saving" : "Save"}
+                {saveStatus === "saving"
+                  ? "Queueing"
+                  : selection.folderId
+                    ? "Retry failed"
+                    : selection.items.length > 1
+                      ? `Save ${selectedSources.size} image${selectedSources.size === 1 ? "" : "s"}`
+                      : "Save"}
               </button>
             </>
           ) : (

@@ -1,4 +1,5 @@
 import type { CaptureDraft } from "@akasha/contracts"
+import type { CaptureSelection } from "./capture"
 
 export const MAX_DELIVERY_ATTEMPTS = 4
 
@@ -10,7 +11,10 @@ export type CaptureOutboxJob = {
   errorMessage?: string
   folderId: string
   nextAttemptAt: number
-  status: "pending" | "failed"
+  status: "pending" | "failed" | "saved" | "already_saved"
+  batchId?: string
+  origin?: CaptureSelection["origin"]
+  reported?: boolean
 }
 
 export function createCaptureOutboxJob(
