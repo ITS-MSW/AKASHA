@@ -121,11 +121,7 @@ export const moveLibraryFolder = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     setPrivateNoStoreHeaders()
     const credentials = await requireGoogleCredentials()
-    return moveDriveFolder(
-      credentials,
-      data.folderId,
-      data.destinationFolderId
-    )
+    return moveDriveFolder(credentials, data.folderId, data.destinationFolderId)
   })
 
 export const removeLibraryFolder = createServerFn({ method: "POST" })

@@ -54,7 +54,11 @@ describe("Drive capture duplicate detection", () => {
       data: { files: [{ id: "existing", name: "reference.jpg" }] },
     })
 
-    const result = await saveCapture({ refreshToken: "refresh-token" }, draft, "folder")
+    const result = await saveCapture(
+      { refreshToken: "refresh-token" },
+      draft,
+      "folder"
+    )
 
     expect(result).toMatchObject({
       file: { id: "existing" },
@@ -84,7 +88,11 @@ describe("Drive capture duplicate detection", () => {
       data: { id: "new-upload", trashed: true },
     })
 
-    const result = await saveCapture({ refreshToken: "refresh-token" }, draft, "folder")
+    const result = await saveCapture(
+      { refreshToken: "refresh-token" },
+      draft,
+      "folder"
+    )
 
     expect(result).toMatchObject({
       file: { id: "existing" },
@@ -118,7 +126,11 @@ describe("Drive capture duplicate detection", () => {
       },
     }))
 
-    const result = await saveCapture({ refreshToken: "refresh-token" }, draft, "folder")
+    const result = await saveCapture(
+      { refreshToken: "refresh-token" },
+      draft,
+      "folder"
+    )
 
     expect(result.outcome).toBe("saved")
     expect(result.file.appProperties?.[CONTENT_HASH_PROPERTY]).toMatch(
@@ -150,12 +162,16 @@ describe("Drive capture duplicate detection", () => {
       },
     }))
 
-    const result = await saveUploadedImage({ refreshToken: "refresh-token" }, "folder", {
-      byteSize: pngBytes.byteLength,
-      fileName: "Campaign Hero.PNG",
-      mimeType: "image/png",
-      stream: new Blob([pngBytes]).stream(),
-    })
+    const result = await saveUploadedImage(
+      { refreshToken: "refresh-token" },
+      "folder",
+      {
+        byteSize: pngBytes.byteLength,
+        fileName: "Campaign Hero.PNG",
+        mimeType: "image/png",
+        stream: new Blob([pngBytes]).stream(),
+      }
+    )
 
     expect(result.outcome).toBe("saved")
     expect(mocks.create).toHaveBeenCalledWith(
@@ -193,7 +209,9 @@ describe("Drive capture duplicate detection", () => {
     })
     mocks.update.mockResolvedValueOnce({ data: { id: "existing" } })
 
-    const result = await backfillCaptureDedupeMetadata({ refreshToken: "refresh-token" })
+    const result = await backfillCaptureDedupeMetadata({
+      refreshToken: "refresh-token",
+    })
 
     expect(result).toEqual({
       nextPageToken: "next-page",

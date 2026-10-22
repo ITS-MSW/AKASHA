@@ -25,17 +25,11 @@ export function createDriveMediaRequestHeaders(
 }
 
 export function createMediaProxyResponse(driveResponse: Response) {
-  return createProxyResponse(
-    driveResponse,
-    "private, max-age=86400, immutable"
-  )
+  return createProxyResponse(driveResponse, "private, max-age=86400, immutable")
 }
 
 export function createThumbnailProxyResponse(driveResponse: Response) {
-  return createProxyResponse(
-    driveResponse,
-    "private, max-age=86400, immutable"
-  )
+  return createProxyResponse(driveResponse, "private, max-age=86400, immutable")
 }
 
 function createProxyResponse(

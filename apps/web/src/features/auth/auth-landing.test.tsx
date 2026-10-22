@@ -17,9 +17,7 @@ describe("AuthLanding", () => {
         name: "Keep the ideas worth returning to.",
       })
     ).toBeTruthy()
-    expect(
-      screen.getByRole("button", { name: "Get started" })
-    ).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Get started" })).toBeTruthy()
     expect(screen.getAllByText("GitHub").length).toBeGreaterThan(0)
     expect(screen.getByText("AKASHA")).toBeTruthy()
     expect(screen.queryByRole("alert")).toBeNull()
@@ -36,11 +34,13 @@ describe("AuthLanding", () => {
     const initialIsDark = document.documentElement.classList.contains("dark")
 
     act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "d" }))
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "d" })
+      )
     })
 
-    expect(document.documentElement.classList.contains("dark")).toBe(!initialIsDark)
+    expect(document.documentElement.classList.contains("dark")).toBe(
+      !initialIsDark
+    )
   })
 })
-
-

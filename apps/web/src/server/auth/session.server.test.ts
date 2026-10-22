@@ -59,7 +59,9 @@ describe("Start session compatibility", () => {
             headers: [...getResponseHeaders(), ["Location", "/"]],
           })
         }
-        return Response.json(session.data, { headers: [...getResponseHeaders()] })
+        return Response.json(session.data, {
+          headers: [...getResponseHeaders()],
+        })
       },
     })
     const cookie = await legacyCookie()
@@ -101,7 +103,9 @@ describe("Start session compatibility", () => {
         setCookie("unrelated", "retained", { httpOnly: true })
         const session = await useStillroomSession()
         await session.update({ oauthState: "test-oauth-state" })
-        return Response.json(session.data, { headers: [...getResponseHeaders()] })
+        return Response.json(session.data, {
+          headers: [...getResponseHeaders()],
+        })
       },
     })
     for (const cookie of ["stillroom-session=invalid", expired]) {

@@ -49,7 +49,6 @@ describe("Drive thumbnail tokens", () => {
       })
     ).toThrow("Expired or invalid thumbnail token")
   })
-
 })
 
 describe("Drive thumbnail fetch", () => {
