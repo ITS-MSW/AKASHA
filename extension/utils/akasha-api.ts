@@ -62,9 +62,6 @@ export async function saveCapture(
   captureId: string,
   attempt: number
 ) {
-  if (draft.kind !== "image")
-    throw new AkashaApiError("Video capture is currently unavailable.", 422)
-
   const response = await authenticatedRequest("/api/extension/captures", {
     body: JSON.stringify({ ...draft, attempt, captureId, folderId }),
     headers: { "Content-Type": "application/json" },

@@ -18,10 +18,7 @@ export function LibraryFilterMenu({
   onSortOrderChange,
   sortOrder,
 }: LibraryFilterMenuProps) {
-  const selectedKeys = new Set([
-    `media:${mediaFilter}`,
-    `sort:${sortOrder}`,
-  ])
+  const selectedKeys = new Set([`media:${mediaFilter}`, `sort:${sortOrder}`])
 
   function applySelection(key: React.Key) {
     const selection = String(key)
@@ -29,9 +26,7 @@ export function LibraryFilterMenu({
       onMediaFilterChange(selection.slice("media:".length) as MediaFilter)
     }
     if (selection.startsWith("sort:")) {
-      onSortOrderChange(
-        selection.slice("sort:".length) as LibrarySortOrder
-      )
+      onSortOrderChange(selection.slice("sort:".length) as LibrarySortOrder)
     }
   }
 

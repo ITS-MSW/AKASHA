@@ -1,5 +1,6 @@
 import type { CaptureDraft } from "@akasha/contracts"
 import { captureDraftSchema } from "@akasha/contracts"
+import { resolveDownloadableVideoUrl } from "./video-source"
 
 type CaptureContext = {
   height?: number
@@ -13,19 +14,21 @@ export function createCaptureDraft(
   context: CaptureContext,
   tabTitle?: string
 ): CaptureDraft | null {
-  if (!context.pageUrl || !context.srcUrl || context.mediaType === "video") {
+  if (!context.pageUrl || !context.srcUrl) {
     return null
   }
 
+  const video = context.mediaType === "video"
+  if (video && !resolveDownloadableVideoUrl({ currentSrc: context.srcUrl })) return null
   const sourceHost = new URL(context.pageUrl).hostname.replace(/^www\./, "")
 
   return captureDraftSchema.parse({
     height: context.height,
-    kind: "image",
+    kind: video ? "video" : "image",
     pageUrl: context.pageUrl,
     sourceUrl: context.srcUrl,
     storageMode: "binary",
-    thumbnailUrl: context.srcUrl,
+    thumbnailUrl: video ? undefined : context.srcUrl,
     title: tabTitle?.trim() || `Saved from ${sourceHost}`,
     width: context.width,
   })
@@ -44,5 +47,5 @@ export function toCaptureSelection(
 ): CaptureSelection | null {
   if (!value) return null
   if ("items" in value) return value
-  return value.kind === "image" ? { id: value.sourceUrl, items: [{ draft: value }] } : null
+  return { id: value.sourceUrl, items: [{ draft: value }] }
 }

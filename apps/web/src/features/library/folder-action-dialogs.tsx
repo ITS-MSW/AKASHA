@@ -53,10 +53,7 @@ export function RenameFolderDialog({
   }
 
   return (
-    <Modal.Backdrop
-      isOpen={folder !== null}
-      onOpenChange={onOpenChange}
-    >
+    <Modal.Backdrop isOpen={folder !== null} onOpenChange={onOpenChange}>
       <Modal.Container size="sm">
         <Modal.Dialog>
           <Modal.CloseTrigger />
@@ -135,10 +132,7 @@ export function MoveFolderDialog({
   }
 
   return (
-    <Modal.Backdrop
-      isOpen={folder !== null}
-      onOpenChange={onOpenChange}
-    >
+    <Modal.Backdrop isOpen={folder !== null} onOpenChange={onOpenChange}>
       <Modal.Container size="sm">
         <Modal.Dialog>
           <Modal.CloseTrigger />
@@ -234,10 +228,7 @@ export function RemoveFolderDialog({
   }
 
   return (
-    <AlertDialog.Backdrop
-      isOpen={folder !== null}
-      onOpenChange={onOpenChange}
-    >
+    <AlertDialog.Backdrop isOpen={folder !== null} onOpenChange={onOpenChange}>
       <AlertDialog.Container size="sm">
         <AlertDialog.Dialog>
           <AlertDialog.CloseTrigger />

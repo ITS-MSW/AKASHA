@@ -41,18 +41,36 @@ export default defineBackground(() => {
       return
     }
 
-    const draft = createCaptureDraft(info, tab?.title)
+    let draft = createCaptureDraft(info, tab?.title)
+    if (info.mediaType === "video" && tab?.id) {
+      try {
+        const result = await browser.tabs.sendMessage(tab.id, {
+          type: "akasha:discover-video",
+          srcUrl: info.srcUrl,
+        })
+        const parsed = captureDraftSchema.safeParse(result)
+        draft = parsed.success && parsed.data.kind === "video" ? parsed.data : null
+      } catch {
+        draft = null
+      }
+    }
 
     if (!draft) {
       await showCaptureNotification(
-        "Could not capture this image",
-        "Open the original image and try again."
+        "Could not capture this media",
+        info.mediaType === "video"
+          ? "No downloadable video found. Reload the post and try again."
+          : "Open the original image and try again."
       )
       return
     }
 
     let drafts = [draft]
-    if (tab?.id && /^https:\/\/(www\.)?(x|twitter)\.com\//.test(info.pageUrl ?? "")) {
+    if (
+      draft.kind === "image" &&
+      tab?.id &&
+      /^https:\/\/(www\.)?(x|twitter)\.com\//.test(info.pageUrl ?? "")
+    ) {
       try {
         const discovered = await browser.tabs.sendMessage(tab.id, {
           type: "akasha:discover-images",
@@ -84,15 +102,13 @@ export default defineBackground(() => {
     await openCapturePanel(tab?.id)
   })
 
-  // Video capture is postponed. Keep the toolbar useful without presenting a
-  // capture path that the product cannot complete reliably.
   browser.action.onClicked.addListener(async () => {
     const failed = (await captureOutboxStorage.getValue()).find((job) => job.status === "failed")
     if (failed) await restoreFailedCapture(failed.batchId ?? failed.captureId)
     else
       await showCaptureNotification(
-        "Save an image",
-        "Right-click an image and choose Save to Akasha."
+        "Save media",
+        "Right-click an image or video and choose Save to Akasha."
       )
   })
   browser.alarms.onAlarm.addListener((alarm) => {
@@ -121,12 +137,12 @@ export default defineBackground(() => {
 async function ensureCaptureMenu() {
   try {
     await browser.contextMenus.update(CAPTURE_MENU_ID, {
-      contexts: ["image"],
+      contexts: ["image", "video"],
       title: "Save to Akasha",
     })
   } catch {
     await browser.contextMenus.create({
-      contexts: ["image"],
+      contexts: ["image", "video"],
       id: CAPTURE_MENU_ID,
       title: "Save to Akasha",
     })
@@ -185,6 +201,23 @@ async function handleExtensionRequest(
   message: ExtensionRequest
 ): Promise<ExtensionResponse<unknown>> {
   try {
+    if (message.type === "akasha:prepare-video") {
+      const result = captureDraftSchema.safeParse(message.draft)
+      if (!result.success || result.data.kind !== "video" || result.data.storageMode !== "binary") {
+        await showCaptureNotification(
+          "Could not capture video",
+          "No downloadable video found. Reload the post and try again."
+        )
+        return { ok: false, error: "No downloadable video found." }
+      }
+      await withStorageMutation(() =>
+        captureDraftStorage.setValue({
+          id: crypto.randomUUID(),
+          items: [{ draft: result.data, captureId: crypto.randomUUID() }],
+        })
+      )
+      return { ok: true, value: null }
+    }
     if (message.type === "akasha:connect") {
       const folders = await connectAkasha()
       await cacheFolderOptions(folders)
@@ -214,12 +247,15 @@ async function enqueueCaptures(message: Extract<ExtensionRequest, { type: "akash
   const captureIds = await withStorageMutation(async () => {
     const selection = toCaptureSelection(await captureDraftStorage.getValue())
     if (!selection || selection.id !== message.selectionId || !message.folderId)
-      throw new Error("Open the image and try again.")
+      throw new Error("Open the media and try again.")
     const selected = selection.items.filter((item) =>
       message.sourceUrls.includes(item.draft.sourceUrl)
     )
-    if (!selected.length || selected.some((item) => item.draft.kind !== "image"))
-      throw new Error("Choose an image to save.")
+    if (
+      !selected.length ||
+      selected.some((item) => item.draft.kind === "video" && item.draft.storageMode !== "binary")
+    )
+      throw new Error("Choose media to save.")
     const jobs = await captureOutboxStorage.getValue()
     const added: CaptureOutboxJob[] = []
     const retried = new Set<string>()
@@ -254,7 +290,7 @@ async function enqueueCaptures(message: Extract<ExtensionRequest, { type: "akash
           : []
       )
       if (accepted.length) return accepted
-      throw new Error("These images are no longer waiting for retry.")
+      throw new Error("These items are no longer waiting for retry.")
     }
     const batchIds = new Set(added.map((job) => job.batchId).filter(Boolean))
     await captureOutboxStorage.setValue([
@@ -431,8 +467,7 @@ async function takeNextReadyJob() {
   return withStorageMutation(async () => {
     const jobs = await captureOutboxStorage.getValue()
     const jobIndex = jobs.findIndex(
-      (job) =>
-        job.draft.kind === "image" && job.status === "pending" && job.nextAttemptAt <= Date.now()
+      (job) => job.status === "pending" && job.nextAttemptAt <= Date.now()
     )
 
     if (jobIndex < 0) return null
@@ -467,10 +502,7 @@ async function removeOutboxJob(captureId: string) {
 async function scheduleNextOutboxAlarm() {
   const jobs = await captureOutboxStorage.getValue()
   const nextAttemptAt = jobs
-    .filter(
-      (job) =>
-        job.draft.kind === "image" && (job.status === "pending" || (job.batchId && !job.reported))
-    )
+    .filter((job) => job.status === "pending" || (job.batchId && !job.reported))
     .reduce<number | null>(
       (earliest, job) =>
         earliest === null
@@ -494,10 +526,7 @@ async function scheduleNextOutboxAlarm() {
 async function restoreFailedCapture(captureId: string, automatic = false) {
   const jobs = await captureOutboxStorage.getValue()
   const failed = jobs.filter(
-    (job) =>
-      job.draft.kind === "image" &&
-      (job.batchId === captureId || job.captureId === captureId) &&
-      job.status === "failed"
+    (job) => (job.batchId === captureId || job.captureId === captureId) && job.status === "failed"
   )
   const first = failed[0]
   if (!first) return false
@@ -592,7 +621,7 @@ async function showFailedCaptureNotification(job: CaptureOutboxJob, count = 1) {
     `${FAILED_NOTIFICATION_PREFIX}${job.batchId ?? job.captureId}`,
     {
       iconUrl: browser.runtime.getURL("/icon/128.png"),
-      message: `${count > 1 ? `${count} images need attention. ` : ""}${job.errorMessage ?? "Akasha could not save this item."} Click to try again.`,
+      message: `${count > 1 ? `${count} items need attention. ` : ""}${job.errorMessage ?? "Akasha could not save this item."} Click to try again.`,
       title: "Save needs attention",
       type: "basic",
     }

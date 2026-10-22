@@ -3,6 +3,7 @@
 @import "@heroui/styles/themes/default";
 @import "@heroui/styles/utilities";
 @import "@heroui/styles/components/checkbox.css" layer(components);
+@import "@heroui/styles/components/button.css" layer(components);
 
 :host {
   color-scheme: light dark;

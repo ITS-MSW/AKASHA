@@ -312,7 +312,7 @@ describe("LibraryPage", () => {
     ).toBeTruthy()
     expect(screen.getByRole("button", { name: "Create folder" })).toBeTruthy()
     expect(
-      screen.getAllByRole("button", { name: "Upload images" })
+      screen.getAllByRole("button", { name: "Upload media" })
     ).toHaveLength(2)
     expect(screen.queryByRole("img")).toBeNull()
   })

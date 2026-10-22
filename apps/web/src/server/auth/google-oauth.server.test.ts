@@ -14,8 +14,6 @@ describe("isGoogleRefreshTokenRejected", () => {
         response: { data: { error: "rate_limit_exceeded" } },
       })
     ).toBe(false)
-    expect(isGoogleRefreshTokenRejected(new Error("Network error"))).toBe(
-      false
-    )
+    expect(isGoogleRefreshTokenRejected(new Error("Network error"))).toBe(false)
   })
 })

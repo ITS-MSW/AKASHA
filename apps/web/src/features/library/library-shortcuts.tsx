@@ -40,7 +40,7 @@ export function LibraryShortcuts() {
                 <Kbd.Content>F</Kbd.Content>
               </Kbd>
             </Shortcut>
-            <Shortcut label="Upload images">
+            <Shortcut label="Upload media">
               <Kbd>
                 <Kbd.Content>U</Kbd.Content>
               </Kbd>

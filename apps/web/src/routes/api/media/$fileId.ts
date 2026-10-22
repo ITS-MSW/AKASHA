@@ -86,6 +86,7 @@ export const Route = createFileRoute("/api/media/$fileId")({
         const driveResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(params.fileId)}?alt=media`,
           {
+            signal: request.signal,
             headers: createDriveMediaRequestHeaders(
               request.headers,
               credentials.accessToken

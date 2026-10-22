@@ -3,8 +3,10 @@ import { lookup } from "node:dns/promises"
 import { Readable, Transform } from "node:stream"
 import type { ReadableStream as NodeReadableStream } from "node:stream/web"
 import {
+  getXVideoMediaIdentity,
   libraryUploadMimeTypes,
   maximumLibraryUploadBytes,
+  maximumVideoUploadBytes,
 } from "@akasha/contracts"
 import type {
   CaptureDraft,
@@ -34,7 +36,7 @@ const IMAGE_MIME_TYPES = new Set<string>(libraryUploadMimeTypes)
 const VIDEO_MIME_TYPES = new Set(["video/mp4", "video/webm"])
 const MAXIMUM_IMAGE_BYTES = maximumLibraryUploadBytes
 const MAXIMUM_POSTER_BYTES = 5 * 1024 * 1024
-const MAXIMUM_VIDEO_BYTES = 50 * 1024 * 1024
+const MAXIMUM_VIDEO_BYTES = maximumVideoUploadBytes
 
 export { FOLDER_MIME_TYPE }
 
@@ -134,7 +136,9 @@ export async function backfillCaptureDedupeMetadata(
   }
 }
 
-export async function listStillroomFolders(credentials: GoogleTokenCredentials) {
+export async function listStillroomFolders(
+  credentials: GoogleTokenCredentials
+) {
   const drive = createDriveClient(credentials)
   const folders: drive_v3.Schema$File[] = []
   let pageToken: string | undefined
@@ -301,6 +305,22 @@ export async function saveCapture(
     )
   }
 
+  if (draft.kind === "video") {
+    const { bytes, mimeType } = await downloadCaptureVideo(draft)
+    const result = await uploadCaptureStream(
+      drive,
+      draft,
+      folderId,
+      Readable.from([bytes]),
+      mimeType,
+      MAXIMUM_VIDEO_BYTES,
+      timings,
+      sourceHash,
+      options.captureId
+    )
+    return { ...result, timings }
+  }
+
   const sourceRequestStartedAt = performance.now()
   const sourceResponse = await fetchSafeRemoteSource(draft.sourceUrl, {
     headers: { "User-Agent": "Akasha Capture/1.0" },
@@ -323,8 +343,7 @@ export async function saveCapture(
   timings.sourceResponseMs = performance.now() - sourceRequestStartedAt
 
   const contentLength = Number(sourceResponse.headers.get("Content-Length"))
-  const maximumBytes =
-    draft.kind === "video" ? MAXIMUM_VIDEO_BYTES : MAXIMUM_IMAGE_BYTES
+  const maximumBytes = MAXIMUM_IMAGE_BYTES
 
   if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
     throw new CaptureSourceError(`This ${draft.kind} is too large to save.`)
@@ -362,79 +381,66 @@ export async function saveCapture(
   }
 }
 
-export async function saveUploadedVideoCapture(
-  credentials: GoogleTokenCredentials,
-  draft: CaptureDraft,
-  folderId: string,
-  upload: {
-    byteSize: number
-    mimeType: string
-    stream: ReadableStream<Uint8Array>
-  },
-  options: { attempt?: number; captureId?: string } = {}
-): Promise<CaptureSaveResult> {
-  if (draft.kind !== "video" || draft.storageMode !== "binary") {
-    throw new CaptureSourceError("Akasha received an invalid video upload.")
-  }
-  if (upload.byteSize <= 0 || upload.byteSize > MAXIMUM_VIDEO_BYTES) {
-    throw new CaptureSourceError("This video is too large to save.")
-  }
-
-  const drive = createDriveClient(credentials)
-  const timings: CaptureSaveTimings = {
-    dedupeMs: 0,
-    driveUploadMs: 0,
-    idempotencyMs: 0,
-    sourceResponseMs: 0,
-  }
-
-  if (options.captureId && (options.attempt ?? 1) > 1) {
-    const idempotencyStartedAt = performance.now()
-    const existingCapture = await findCaptureById(drive, options.captureId)
-    timings.idempotencyMs = performance.now() - idempotencyStartedAt
-
-    if (existingCapture) {
-      return { file: existingCapture, outcome: "saved", timings }
-    }
-  }
-
-  const sourceHash = createSourceFingerprint(draft.sourceUrl)
-  const sourceDuplicate = await findDuplicateByProperty(
-    drive,
-    SOURCE_HASH_PROPERTY,
-    sourceHash,
-    timings
-  )
-
-  if (sourceDuplicate) {
-    return {
-      file: sourceDuplicate,
-      outcome: "already_saved",
-      timings,
-    }
-  }
-
-  const mimeType = normalizeMediaMimeType(upload.mimeType, "video")
-  const sourceStream = Readable.fromWeb(
-    upload.stream as unknown as NodeReadableStream
-  )
-
-  try {
-    const result = await uploadCaptureStream(
-      drive,
-      draft,
-      folderId,
-      sourceStream,
-      mimeType,
-      MAXIMUM_VIDEO_BYTES,
-      timings,
-      sourceHash,
-      options.captureId
+async function downloadCaptureVideo(draft: CaptureDraft) {
+  const variants = draft.videoVariants?.length
+    ? [...draft.videoVariants].sort((a, b) => b.bitrate - a.bitrate)
+    : [{ url: draft.sourceUrl, bitrate: 0 }]
+  if (draft.videoVariants?.length) {
+    const identity = getXVideoMediaIdentity(draft.thumbnailUrl ?? "", "poster")
+    if (
+      !identity ||
+      !variants.some((variant) => variant.url === draft.sourceUrl) ||
+      variants.some(
+        (variant) => getXVideoMediaIdentity(variant.url, "video") !== identity
+      )
     )
-    return { ...result, timings }
-  } finally {
-    sourceStream.destroy()
+      throw new CaptureSourceError(
+        "Akasha could not match this video's source."
+      )
   }
+  for (const variant of variants) {
+    const response = await fetchSafeRemoteSource(variant.url, {
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!response.ok || !response.body) {
+      await response.body?.cancel()
+      if (response.status === 429 || response.status >= 500)
+        throw new Error("The source video is temporarily unavailable.")
+      continue
+    }
+    if (Number(response.headers.get("content-length")) > MAXIMUM_VIDEO_BYTES) {
+      await response.body.cancel()
+      continue
+    }
+    const mimeType = normalizeMediaMimeType(
+      response.headers.get("content-type"),
+      "video"
+    )
+    const stream = Readable.fromWeb(
+      response.body as unknown as NodeReadableStream
+    )
+    const validator = createVideoValidationTransform(
+      mimeType,
+      MAXIMUM_VIDEO_BYTES
+    )
+    stream.on("error", (error) => validator.destroy(error))
+    stream.pipe(validator)
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of validator) chunks.push(Buffer.from(chunk))
+      return { bytes: Buffer.concat(chunks), mimeType }
+    } catch (error) {
+      if (
+        !(error instanceof CaptureSourceError) ||
+        !error.message.includes("too large")
+      )
+        throw error
+    } finally {
+      stream.destroy()
+      validator.destroy()
+    }
+  }
+  throw new CaptureSourceError("No downloadable video fits the 50 MiB limit.")
 }
 
 export async function saveUploadedImage(
@@ -572,15 +578,17 @@ async function uploadCaptureStream(
     ).catch(() => undefined)
 
     if (posterDriveFileId) {
-      const updated = await drive.files.update({
-        fileId: file.id,
-        fields:
-          "id,name,mimeType,size,parents,thumbnailLink,appProperties,createdTime",
-        requestBody: {
-          description: createCaptureDescription(draft, posterDriveFileId),
-        },
-      })
-      file = updated.data
+      const updated = await drive.files
+        .update({
+          fileId: file.id,
+          fields:
+            "id,name,mimeType,size,parents,thumbnailLink,appProperties,createdTime",
+          requestBody: {
+            description: createCaptureDescription(draft, posterDriveFileId),
+          },
+        })
+        .catch(() => undefined)
+      if (updated) file = updated.data
     }
   }
 
@@ -748,14 +756,19 @@ function detectImageMimeType(bytes: Buffer): LibraryUploadMimeType | undefined {
 
 export function normalizeLibraryUploadFileName(
   value: string,
-  mimeType: LibraryUploadMimeType
+  mimeType: LibraryUploadMimeType | "video/mp4" | "video/webm"
 ) {
-  const extensionByMimeType: Record<LibraryUploadMimeType, string> = {
+  const extensionByMimeType: Record<
+    LibraryUploadMimeType | "video/mp4" | "video/webm",
+    string
+  > = {
     "image/avif": "avif",
     "image/gif": "gif",
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
   }
   const extension = extensionByMimeType[mimeType]
   const cleaned = removeControlCharacters(value.replace(/[\\/]+/g, "-")).trim()
@@ -919,7 +932,7 @@ async function findDuplicateByProperty(
   return response.data.files?.[0]
 }
 
-async function finalizeContentHash(
+export async function finalizeContentHash(
   drive: drive_v3.Drive,
   file: drive_v3.Schema$File,
   contentHash: string,
@@ -932,12 +945,24 @@ async function finalizeContentHash(
     timings
   )
 
+  if (duplicate && duplicate.id === file.id)
+    return { file: duplicate, outcome: "saved" }
   if (duplicate) {
     const dedupeStartedAt = performance.now()
     await drive.files.update({
       fileId: file.id!,
       fields: "id,trashed",
-      requestBody: { trashed: true },
+      requestBody: {
+        trashed: true,
+        ...(file.appProperties?.stillroomType === "upload_pending"
+          ? {
+              appProperties: {
+                ...file.appProperties,
+                akashaDuplicateOf: duplicate.id!,
+              },
+            }
+          : {}),
+      },
     })
     timings.dedupeMs += performance.now() - dedupeStartedAt
     return { file: duplicate, outcome: "already_saved" }

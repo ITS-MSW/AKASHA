@@ -550,6 +550,8 @@ export function LibraryPage({
         onRemove={removeFolder}
       />
       <LibraryUploader
+        key={rootFolderId}
+        rootFolderId={rootFolderId}
         folderId={selectedFolderId}
         folderName={selectedFolderName}
         onRefresh={onRefresh}

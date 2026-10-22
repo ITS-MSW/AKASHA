@@ -54,7 +54,8 @@ async function loadFolderActionContext(
   credentials: GoogleTokenCredentials,
   folderId: string
 ): Promise<FolderActionContext> {
-  const { folders: driveFolders, root } = await listStillroomFolders(credentials)
+  const { folders: driveFolders, root } =
+    await listStillroomFolders(credentials)
   if (!root.id) throw new Error("Akasha could not identify the library root.")
 
   const folders = buildReachableFolders(root.id, driveFolders)
@@ -74,10 +75,7 @@ function assertFolderMoveDestination(
 
   if (!destinationExists) throw new Error("Choose a folder inside Akasha.")
 
-  const descendants = getFolderDescendantIds(
-    context.folders,
-    context.folder.id
-  )
+  const descendants = getFolderDescendantIds(context.folders, context.folder.id)
   if (
     destinationFolderId === context.folder.id ||
     descendants.has(destinationFolderId)

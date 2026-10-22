@@ -122,7 +122,7 @@ describe("MediaGallery context menu", () => {
     expect(downloadLink?.download).toBe("image reference.jpg")
   })
 
-  it("does not offer downloads for videos", async () => {
+  it("offers downloads for stored videos", async () => {
     renderGallery([createItem("video")])
 
     fireEvent.contextMenu(
@@ -130,7 +130,7 @@ describe("MediaGallery context menu", () => {
     )
 
     expect(await screen.findByRole("menuitem", { name: "Move to folder" }))
-    expect(screen.queryByRole("menuitem", { name: "Download" })).toBeNull()
+    expect(screen.queryByRole("menuitem", { name: "Download" })).not.toBeNull()
   })
 })
 
@@ -339,7 +339,10 @@ describe("MediaGallery image loading", () => {
       height: 200,
     })
     fireEvent.keyDown(window, { key: "ArrowRight" })
-    expect(dialog.querySelector("video")).toBeTruthy()
+    const video = dialog.querySelector("video")!
+    expect(video.autoplay).toBe(false)
+    fireEvent.keyDown(video, { key: "ArrowRight" })
+    expect(dialog.querySelector("video")).toBe(video)
     fireEvent.keyDown(window, { key: "Alt", altKey: true })
     fireEvent.keyDown(window, { key: "ArrowRight", altKey: true })
     content = within(dialog).getByRole("img", { name: "Third" }).parentElement!

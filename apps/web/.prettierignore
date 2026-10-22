@@ -2,3 +2,14 @@ package-lock.json
 pnpm-lock.yaml
 yarn.lock
 src/routeTree.gen.ts
+
+# Generated build and QA output
+.vercel/
+.output/
+.tanstack/
+.vinxi/
+dist/
+dist-ssr/
+coverage/
+playwright-report/
+test-results/

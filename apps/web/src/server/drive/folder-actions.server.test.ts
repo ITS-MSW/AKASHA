@@ -40,7 +40,9 @@ describe("folder actions", () => {
   })
 
   it("renames, moves, and trashes managed folders while rejecting cycles", async () => {
-    mocks.update.mockResolvedValueOnce({ data: { id: "parent", name: "Renamed" } })
+    mocks.update.mockResolvedValueOnce({
+      data: { id: "parent", name: "Renamed" },
+    })
     mocks.moveFile.mockResolvedValueOnce({ id: "parent", parents: ["target"] })
     mocks.trashFile.mockResolvedValueOnce({ id: "parent", trashed: true })
 
@@ -53,11 +55,7 @@ describe("folder actions", () => {
       fileId: "parent",
       requestBody: { name: "Renamed" },
     })
-    expect(mocks.moveFile).toHaveBeenCalledWith(
-      credentials,
-      "parent",
-      "target"
-    )
+    expect(mocks.moveFile).toHaveBeenCalledWith(credentials, "parent", "target")
     expect(mocks.trashFile).toHaveBeenCalledWith(credentials, "parent")
     await expect(
       moveDriveFolder(credentials, "parent", "child")

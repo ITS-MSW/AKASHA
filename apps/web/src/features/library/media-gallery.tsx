@@ -294,8 +294,8 @@ const MediaCard = memo(function MediaCard({
         <ContextMenu.Menu
           aria-label={`Manage ${item.title}`}
           onAction={(key) => {
-            if (key === "download" && item.kind === "image") {
-              downloadImage(item)
+            if (key === "download") {
+              downloadMedia(item)
             }
             if (key === "pool") onTogglePool?.(item.id)
             if (key === "move") onMove(item.id)
@@ -311,7 +311,7 @@ const MediaCard = memo(function MediaCard({
               <Label>{inPool ? "Remove from pool" : "Add to pool"}</Label>
             </ContextMenu.Item>
           ) : null}
-          {item.kind === "image" ? (
+          {item.storageMode !== "reference" ? (
             <ContextMenu.Item id="download" textValue="Download">
               <DownloadSimpleIcon aria-hidden="true" />
               <Label>Download</Label>
@@ -338,9 +338,11 @@ const imageFileExtensions: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
 }
 
-function downloadImage(item: LibraryItem) {
+function downloadMedia(item: LibraryItem) {
   const link = document.createElement("a")
   const extension = item.mimeType
     ? imageFileExtensions[item.mimeType]
@@ -426,6 +428,7 @@ function MediaLightbox({
         onAddToPool([activeItem.id])
         return
       }
+      if (event.target instanceof HTMLVideoElement) return
       if (event.key === "ArrowLeft" && currentIndex > 0) {
         event.preventDefault()
         onActiveIndexChange(currentIndex - 1)
@@ -710,7 +713,7 @@ function PreviewImage({ item }: { item: LibraryItem }) {
       {item.thumbnailUrl && !hasPreviewError ? (
         <img
           alt=""
-          className="block h-auto w-auto max-h-[calc(100dvh-6rem)] max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
+          className="block h-auto max-h-[calc(100dvh-6rem)] w-auto max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
           decoding="async"
           height={item.height}
           onError={() => setHasPreviewError(true)}
@@ -725,7 +728,7 @@ function PreviewImage({ item }: { item: LibraryItem }) {
       {!hasOriginalError ? (
         <img
           alt={item.title}
-          className="block h-auto w-auto max-h-[calc(100dvh-6rem)] max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
+          className="block h-auto max-h-[calc(100dvh-6rem)] w-auto max-w-[min(100%,100rem)] object-contain [grid-area:1/1]"
           decoding="async"
           fetchPriority="high"
           height={item.height}

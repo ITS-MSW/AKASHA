@@ -51,5 +51,7 @@ function compareOldest(left: LibraryItem, right: LibraryItem) {
 }
 
 function compareTitles(left: LibraryItem, right: LibraryItem) {
-  return left.title.localeCompare(right.title, undefined, { sensitivity: "base" })
+  return left.title.localeCompare(right.title, undefined, {
+    sensitivity: "base",
+  })
 }
