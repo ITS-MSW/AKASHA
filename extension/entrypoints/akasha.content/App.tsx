@@ -5,9 +5,10 @@ import {
   CheckIcon,
   FolderIcon,
   ImageIcon,
+  MagnifyingGlassIcon,
   XIcon,
 } from "@phosphor-icons/react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import type { FolderOption } from "@/utils/akasha-api"
 import { connectLibrary, getFolderOptions, saveLibraryCapture } from "@/utils/messages"
 import { captureDraftStorage, selectedFolderStorage } from "@/utils/storage"
@@ -22,7 +23,8 @@ export default function App({ onClose }: { onClose: () => void }) {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle")
-  const folderPickerRef = useRef<HTMLDetailsElement>(null)
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
+  const comboboxRef = useRef<HTMLDivElement>(null)
 
   const applyFolders = useCallback(
     (availableFolders: FolderOption[], storedFolderId: string | null) => {
@@ -66,10 +68,10 @@ export default function App({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return
-      if (folderPickerRef.current?.open) {
+      if (folderPickerOpen) {
         event.preventDefault()
-        folderPickerRef.current.open = false
-        folderPickerRef.current.querySelector("summary")?.focus()
+        setFolderPickerOpen(false)
+        comboboxRef.current?.querySelector("input")?.focus()
         return
       }
       onClose()
@@ -77,7 +79,17 @@ export default function App({ onClose }: { onClose: () => void }) {
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [onClose])
+  }, [folderPickerOpen, onClose])
+
+  useEffect(() => {
+    if (!folderPickerOpen) return
+    function onPointerDown(event: PointerEvent) {
+      if (comboboxRef.current?.contains(event.target as Node)) return
+      setFolderPickerOpen(false)
+    }
+    window.addEventListener("pointerdown", onPointerDown)
+    return () => window.removeEventListener("pointerdown", onPointerDown)
+  }, [folderPickerOpen])
 
   async function handleConnect() {
     setIsLoading(true)
@@ -111,11 +123,9 @@ export default function App({ onClose }: { onClose: () => void }) {
 
   async function handleFolderChange(folderId: string) {
     setSelectedFolderId(folderId)
-    folderPickerRef.current?.removeAttribute("open")
+    setFolderPickerOpen(false)
     await selectedFolderStorage.setValue(folderId)
   }
-
-  const selectedFolder = folders.find((folder) => folder.id === selectedFolderId)
 
   return (
     <div className="akasha-backdrop">
@@ -155,30 +165,14 @@ export default function App({ onClose }: { onClose: () => void }) {
           ) : draft ? (
             <>
               <CapturePreview draft={draft} />
-              <div className="folder-field">
-                <span>Folder</span>
-                <details className="folder-picker" ref={folderPickerRef}>
-                  <summary aria-label={`Folder, ${selectedFolder?.label ?? "Akasha"}`}>
-                    <FolderIcon aria-hidden="true" />
-                    <span>{selectedFolder?.label ?? "Akasha"}</span>
-                    <CaretDownIcon aria-hidden="true" />
-                  </summary>
-                  <div className="folder-options">
-                    {folders.map((folder) => (
-                      <button
-                        aria-pressed={folder.id === selectedFolderId}
-                        key={folder.id}
-                        onClick={() => void handleFolderChange(folder.id)}
-                        style={{ paddingInlineStart: `${12 + folder.depth * 18}px` }}
-                        type="button"
-                      >
-                        <span>{folder.label}</span>
-                        {folder.id === selectedFolderId ? <CheckIcon aria-hidden="true" /> : null}
-                      </button>
-                    ))}
-                  </div>
-                </details>
-              </div>
+              <FolderCombobox
+                comboboxRef={comboboxRef}
+                folders={folders}
+                isOpen={folderPickerOpen}
+                onOpenChange={setFolderPickerOpen}
+                onSelect={(folderId) => void handleFolderChange(folderId)}
+                selectedFolderId={selectedFolderId}
+              />
               <button
                 className="primary-button"
                 disabled={!selectedFolderId || saveStatus === "saving"}
@@ -206,6 +200,189 @@ export default function App({ onClose }: { onClose: () => void }) {
         </div>
       </main>
     </div>
+  )
+}
+
+function FolderCombobox({
+  comboboxRef,
+  folders,
+  isOpen,
+  onOpenChange,
+  onSelect,
+  selectedFolderId,
+}: {
+  comboboxRef: React.RefObject<HTMLDivElement | null>
+  folders: FolderOption[]
+  isOpen: boolean
+  onOpenChange: (open: boolean) => void
+  onSelect: (folderId: string) => void
+  selectedFolderId: string
+}) {
+  const [query, setQuery] = useState("")
+  const [activeIndex, setActiveIndex] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listId = useId()
+  const labelId = useId()
+
+  const selectedFolder = folders.find((folder) => folder.id === selectedFolderId)
+  const normalizedQuery = query.trim().toLowerCase()
+  const filtered = useMemo(() => {
+    if (!normalizedQuery) return folders
+    return folders.filter((folder) => folder.label.toLowerCase().includes(normalizedQuery))
+  }, [folders, normalizedQuery])
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveIndex(() => {
+        const selectedIndex = filtered.findIndex((folder) => folder.id === selectedFolderId)
+        return selectedIndex >= 0 ? selectedIndex : 0
+      })
+    }
+  }, [isOpen, filtered, selectedFolderId])
+
+  useEffect(() => {
+    if (!isOpen) setQuery("")
+  }, [isOpen])
+
+  const displayValue = isOpen ? query : (selectedFolder?.label ?? "")
+  const activeId = filtered[activeIndex] ? `${listId}-${filtered[activeIndex].id}` : undefined
+
+  function selectFolder(folderId: string) {
+    onSelect(folderId)
+    inputRef.current?.focus()
+  }
+
+  function onInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault()
+      if (!isOpen) {
+        onOpenChange(true)
+        return
+      }
+      setActiveIndex((index) => (filtered.length === 0 ? 0 : (index + 1) % filtered.length))
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault()
+      if (isOpen) {
+        setActiveIndex((index) =>
+          filtered.length === 0 ? 0 : (index - 1 + filtered.length) % filtered.length
+        )
+      }
+    } else if (event.key === "Enter") {
+      const target = filtered[activeIndex]
+      if (isOpen && target) {
+        event.preventDefault()
+        selectFolder(target.id)
+      }
+    }
+  }
+
+  return (
+    <div className="folder-field">
+      <label htmlFor={`${listId}-input`} id={labelId}>
+        Folder
+      </label>
+      <div className="folder-combobox" ref={comboboxRef}>
+        <div className="folder-input-wrap">
+          <FolderIcon aria-hidden="true" className="folder-leading-icon" />
+          <input
+            aria-activedescendant={isOpen ? activeId : undefined}
+            aria-autocomplete="list"
+            aria-controls={listId}
+            aria-expanded={isOpen}
+            autoComplete="off"
+            id={`${listId}-input`}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setActiveIndex(0)
+              if (!isOpen) onOpenChange(true)
+            }}
+            onFocus={() => onOpenChange(true)}
+            onKeyDown={onInputKeyDown}
+            placeholder="Search folders…"
+            ref={inputRef}
+            role="combobox"
+            type="text"
+            value={displayValue}
+          />
+          {isOpen && query ? (
+            <button
+              aria-label="Clear folder search"
+              className="folder-clear"
+              onClick={() => {
+                setQuery("")
+                setActiveIndex(0)
+                inputRef.current?.focus()
+              }}
+              type="button"
+            >
+              <XIcon aria-hidden="true" />
+            </button>
+          ) : (
+            <MagnifyingGlassIcon aria-hidden="true" className="folder-trailing-icon" />
+          )}
+          <button
+            aria-label={
+              isOpen ? "Close folder list" : `Open folder list, ${filtered.length} folders`
+            }
+            className="folder-toggle"
+            onClick={() => onOpenChange(!isOpen)}
+            tabIndex={-1}
+            type="button"
+          >
+            <CaretDownIcon aria-hidden="true" className={isOpen ? "caret-open" : undefined} />
+          </button>
+        </div>
+        {isOpen ? (
+          <div className="folder-options">
+            {filtered.length === 0 ? (
+              <p className="folder-empty">No folders match “{query.trim()}”</p>
+            ) : (
+              <div aria-labelledby={labelId} id={listId} role="listbox" tabIndex={-1}>
+                {filtered.map((folder, index) => {
+                  const isSelected = folder.id === selectedFolderId
+                  const isActive = index === activeIndex
+                  return (
+                    <button
+                      aria-selected={isSelected}
+                      className={isActive ? "folder-option-active" : undefined}
+                      id={`${listId}-${folder.id}`}
+                      key={folder.id}
+                      role="option"
+                      onClick={() => selectFolder(folder.id)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      style={{ paddingInlineStart: `${12 + folder.depth * 18}px` }}
+                      tabIndex={-1}
+                      type="button"
+                    >
+                      <FolderMatch label={folder.label} query={normalizedQuery} />
+                      {isSelected ? <CheckIcon aria-hidden="true" /> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+      <p aria-live="polite" className="folder-count" role="status">
+        {isOpen && normalizedQuery
+          ? `${filtered.length} of ${folders.length} folders`
+          : `${folders.length} folders`}
+      </p>
+    </div>
+  )
+}
+
+function FolderMatch({ label, query }: { label: string; query: string }) {
+  if (!query) return <span>{label}</span>
+  const matchIndex = label.toLowerCase().indexOf(query)
+  if (matchIndex < 0) return <span>{label}</span>
+  return (
+    <span>
+      {label.slice(0, matchIndex)}
+      <mark>{label.slice(matchIndex, matchIndex + query.length)}</mark>
+      {label.slice(matchIndex + query.length)}
+    </span>
   )
 }
 

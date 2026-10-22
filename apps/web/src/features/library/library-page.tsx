@@ -6,12 +6,7 @@ import { getFolderDescendantIds, getFolderPath } from "@akasha/contracts"
 import type { LibraryFolder } from "@akasha/contracts"
 
 import type { DriveLibrarySnapshot } from "@/server/drive/library.server"
-import {
-  applyTheme,
-  isThemePreference,
-  resolveTheme,
-} from "@/features/theme/theme"
-import type { ThemePreference } from "@/features/theme/theme"
+import { useTheme } from "@/features/theme/use-theme"
 import { FolderGallery } from "./folder-tree"
 import {
   MoveFolderDialog,
@@ -78,7 +73,7 @@ export function LibraryPage({
   const [moveItemIds, setMoveItemIds] = useState<string[]>([])
   const [removeItemIds, setRemoveItemIds] = useState<string[]>([])
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
-  const [theme, setTheme] = useState<ThemePreference>("system")
+  const { theme, setTheme, toggleTheme } = useTheme()
   const [snapshot, setSnapshot] = useState(initialSnapshot)
   const uploaderRef = useRef<LibraryUploaderHandle>(null)
   const { folders, items, rootFolderId } = snapshot
@@ -146,21 +141,6 @@ export function LibraryPage({
   }, [initialSnapshot])
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("stillroom-theme")
-
-    if (isThemePreference(savedTheme)) setTheme(savedTheme)
-  }, [])
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)")
-    const apply = () => applyTheme(theme, media.matches)
-    apply()
-    media.addEventListener("change", apply)
-    window.localStorage.setItem("stillroom-theme", theme)
-    return () => media.removeEventListener("change", apply)
-  }, [theme])
-
-  useEffect(() => {
     setSelectedItemIds(new Set())
     setIsSelectionMode(false)
   }, [activeTab, mediaFilter, selectedFolderId])
@@ -177,10 +157,7 @@ export function LibraryPage({
     onMediaFilterCycle: () =>
       setMediaFilter((current) => cycleMediaFilter(current)),
     onSelectionModeToggle: () => changeSelectionMode(!isSelectionMode),
-    onThemeToggle: () =>
-      setTheme((current) =>
-        resolveTheme(current) === "dark" ? "light" : "dark"
-      ),
+    onThemeToggle: toggleTheme,
     onUpload: () => uploaderRef.current?.openFilePicker(),
     onViewToggle: () =>
       setActiveTab((current) => (current === "all" ? "folders" : "all")),
@@ -355,6 +332,7 @@ export function LibraryPage({
       <MediaGallery
         poolItemIds={pool.itemIds}
         onTogglePool={pool.toggleItem}
+        onAddToPool={pool.addItems}
         showPoolControls={pool.isActive}
         isSelectionMode={isSelectionMode}
         items={filteredItems}
@@ -473,6 +451,7 @@ export function LibraryPage({
                       poolMode
                       poolItemIds={pool.itemIds}
                       onTogglePool={pool.toggleItem}
+                      onAddToPool={pool.addItems}
                       isSelectionMode={false}
                       items={poolItems}
                       onMoveItem={openMoveItem}

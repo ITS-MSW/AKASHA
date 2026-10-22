@@ -1,5 +1,6 @@
 :host {
   color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
   --akasha-accent: oklch(0.58 0.23 303.724);
   --akasha-background: oklch(0.13 0.006 285);
   --akasha-surface: oklch(0.19 0.008 285);
@@ -25,8 +26,15 @@ summary {
   cursor: pointer;
 }
 
+.akasha-panel::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 button:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+input:focus-visible {
   outline: 2px solid var(--akasha-accent);
   outline-offset: 2px;
 }
@@ -51,8 +59,11 @@ summary:focus-visible {
   width: min(400px, calc(100vw - 32px));
   max-height: min(680px, calc(100vh - 32px));
   overflow: hidden auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--akasha-border);
-  border-radius: 18px;
+  border-radius: 22px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   color: var(--akasha-foreground);
   background: var(--akasha-background);
   box-shadow: 0 24px 72px oklch(0 0 0 / 45%);
@@ -68,10 +79,10 @@ summary:focus-visible {
 
 .akasha-header {
   display: flex;
-  min-height: 52px;
+  min-height: 56px;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px 8px 14px;
+  padding: 8px 8px 8px 14px;
 }
 
 .akasha-brand {
@@ -91,18 +102,27 @@ summary:focus-visible {
 
 .icon-button {
   display: grid;
-  width: 34px;
-  height: 34px;
+  min-width: 40px;
+  min-height: 40px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--akasha-muted);
   background: transparent;
+  transition-property: color, background-color, transform;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
 }
 
 .icon-button:hover {
   color: var(--akasha-foreground);
   background: var(--akasha-surface);
+}
+
+.icon-button:active {
+  transform: scale(0.96);
 }
 
 .icon-button svg {
@@ -133,6 +153,7 @@ p {
   color: var(--akasha-muted);
   font-size: 12px;
   line-height: 1.45;
+  text-wrap: pretty;
 }
 
 .connection-state {
@@ -188,36 +209,95 @@ p {
   font-weight: 650;
 }
 
-.folder-picker {
+.folder-combobox {
   position: relative;
 }
 
-.folder-picker summary {
+.folder-input-wrap {
   display: grid;
   min-height: 40px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   border: 1px solid var(--akasha-border);
   border-radius: 10px;
-  padding: 0 11px;
+  padding: 0 6px 0 11px;
   background: var(--akasha-surface);
   font-size: 13px;
   font-weight: 500;
-  list-style: none;
+  transition-property: border-color, background-color;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
 }
 
-.folder-picker summary::-webkit-details-marker {
-  display: none;
+.folder-input-wrap:focus-within {
+  border-color: var(--akasha-accent);
 }
 
-.folder-picker summary svg {
+.folder-input-wrap svg {
   width: 16px;
   height: 16px;
   color: var(--akasha-muted);
+  flex: none;
 }
 
-.folder-picker[open] summary > svg:last-child {
+.folder-input-wrap input {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  color: var(--akasha-foreground);
+  background: transparent;
+  font: inherit;
+  text-overflow: ellipsis;
+}
+
+.folder-input-wrap input::placeholder {
+  color: var(--akasha-muted);
+}
+
+.folder-input-wrap input:focus {
+  outline: none;
+}
+
+.folder-trailing-icon {
+  justify-self: end;
+}
+
+.folder-clear,
+.folder-toggle {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--akasha-muted);
+  background: transparent;
+  transition-property: color, background-color, transform;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
+}
+
+.folder-clear:hover,
+.folder-toggle:hover {
+  color: var(--akasha-foreground);
+  background: color-mix(in oklch, var(--akasha-accent), transparent 86%);
+}
+
+.folder-clear svg,
+.folder-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.folder-toggle svg {
+  transition-property: transform;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.folder-toggle .caret-open {
   transform: rotate(180deg);
 }
 
@@ -225,42 +305,79 @@ p {
   margin-top: 6px;
   max-height: 260px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--akasha-border);
   border-radius: 10px;
+  padding: 4px;
   background: var(--akasha-surface);
   box-shadow: 0 16px 40px oklch(0 0 0 / 34%);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  animation: folder-list-in 120ms ease-out;
+}
+
+.folder-options::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.folder-options [role="listbox"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-options [role="option"] {
+  border-radius: 8px;
+}
+
+.folder-options .folder-option-active {
+  background: color-mix(in oklch, var(--akasha-accent), transparent 84%);
 }
 
 .folder-options button {
   display: grid;
   width: 100%;
-  min-height: 38px;
+  min-height: 40px;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   border: 0;
+  border-radius: 8px;
   color: var(--akasha-foreground);
   background: transparent;
   text-align: left;
+  font-size: 13px;
+  transition-property: background-color;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
 }
 
-.folder-options button:hover,
-.folder-options button[aria-pressed="true"] {
+.folder-options button:hover {
   background: color-mix(in oklch, var(--akasha-accent), transparent 84%);
-}
-
-.folder-options button:first-child {
-  border-radius: 9px 9px 0 0;
-}
-
-.folder-options button:last-child {
-  border-radius: 0 0 9px 9px;
 }
 
 .folder-options button svg {
   width: 16px;
   height: 16px;
   color: var(--akasha-accent);
+}
+
+.folder-options mark {
+  border-radius: 3px;
+  padding: 0 1px;
+  color: inherit;
+  background: color-mix(in oklch, var(--akasha-accent), transparent 62%);
+}
+
+.folder-empty {
+  padding: 16px 12px;
+  text-align: center;
+}
+
+.folder-count {
+  font-variant-numeric: tabular-nums;
 }
 
 .primary-button {
@@ -276,10 +393,17 @@ p {
   background: var(--akasha-accent);
   font-size: 13px;
   font-weight: 700;
+  transition-property: transform, filter;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
 }
 
 .primary-button:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+.primary-button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .primary-button:disabled {
@@ -343,11 +467,25 @@ p {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
 }
 
+@keyframes folder-list-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .akasha-backdrop,
   .akasha-panel,
+  .folder-options,
   .spin {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
+  }
+
+  .primary-button,
+  .icon-button,
+  .folder-clear,
+  .folder-toggle,
+  .folder-input-wrap,
+  .folder-options button {
+    transition-duration: 0.01ms;
   }
 }

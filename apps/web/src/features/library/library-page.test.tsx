@@ -36,7 +36,10 @@ vi.mock("@tanstack/react-router", async () => {
   }
 })
 
+const TestResizeObserver = globalThis.ResizeObserver
+
 beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", TestResizeObserver)
   vi.stubGlobal("CSS", { escape: (value: string) => value })
   for (const action of Object.values(actionMocks)) action.mockReset()
 })
@@ -44,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   sessionStorage.clear()
+  localStorage.clear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -61,13 +65,17 @@ describe("LibraryPage", () => {
       ],
       rootFolderId: "root",
     }
+    sessionStorage.setItem(
+      "akasha:temporary-pool:root",
+      JSON.stringify(["one", "one"])
+    )
     const page = render(
       <LibraryPage initialSnapshot={snapshot} requestedFolderId="source" />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Temporary pool" }))
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add to pool: First asset" })
-    )
+    expect(sessionStorage.getItem("akasha:temporary-pool:root")).toBeNull()
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one"])
     page.rerender(
       <LibraryPage initialSnapshot={snapshot} requestedFolderId="target" />
     )
@@ -82,7 +90,7 @@ describe("LibraryPage", () => {
       screen.getByRole("button", { name: "Add selected assets to pool" })
     )
     expect(
-      JSON.parse(sessionStorage.getItem("akasha:temporary-pool:root")!)
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
     ).toEqual(["one", "two"])
     fireEvent.click(screen.getByRole("button", { name: "Collapse pool" }))
     expect(screen.queryByRole("complementary")).toBeNull()
@@ -102,32 +110,79 @@ describe("LibraryPage", () => {
     )
     expect(pool.queryByRole("button", { name: "Open First asset" })).toBeNull()
     fireEvent.click(pool.getByRole("button", { name: "Dismiss pool" }))
-    expect(sessionStorage.getItem("akasha:temporary-pool:root")).toBeNull()
+    expect(localStorage.getItem("akasha:temporary-pool:root")).toBe("null")
     expect(
       screen.getByRole("button", { name: "Open First asset" })
     ).toBeTruthy()
     expect(
       screen.getByRole("button", { name: "Open Second asset" })
     ).toBeTruthy()
+    cleanup()
+    sessionStorage.setItem(
+      "akasha:temporary-pool:root",
+      JSON.stringify(["one"])
+    )
+    render(<LibraryPage initialSnapshot={snapshot} />)
+    expect(screen.queryByRole("complementary")).toBeNull()
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key: "akasha:temporary-pool:root",
+        newValue: JSON.stringify(["two"]),
+        storageArea: localStorage,
+      })
+    )
+    expect(
+      within(screen.getByRole("complementary")).getByRole("button", {
+        name: "Open Second asset",
+      })
+    ).toBeTruthy()
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key: "akasha:temporary-pool:root",
+        newValue: "null",
+        storageArea: localStorage,
+      })
+    )
+    expect(screen.queryByRole("complementary")).toBeNull()
     for (const action of Object.values(actionMocks))
       expect(action).not.toHaveBeenCalled()
   })
 
   it("recovers from invalid or blocked pool storage and isolates libraries", () => {
-    sessionStorage.setItem("akasha:temporary-pool:root", '{"invalid":true}')
+    localStorage.setItem("akasha:temporary-pool:root", '{"invalid":true}')
     const snapshot = {
       folders: [],
       items: [createLibraryItem("one", "First asset")],
       rootFolderId: "root",
     }
-    const page = render(<LibraryPage initialSnapshot={snapshot} />)
+    let page = render(<LibraryPage initialSnapshot={snapshot} />)
     expect(screen.queryByRole("complementary")).toBeNull()
+    page.unmount()
+    sessionStorage.setItem(
+      "akasha:temporary-pool:root",
+      JSON.stringify(["one"])
+    )
+    const originalGet = Storage.prototype.getItem
+    const getItem = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(function (this: Storage, key) {
+        if (this === localStorage) throw new Error("Storage blocked")
+        return originalGet.call(this, key)
+      })
     const setItem = vi
       .spyOn(Storage.prototype, "setItem")
       .mockImplementation(() => {
         throw new Error("Storage blocked")
       })
-    fireEvent.click(screen.getByRole("button", { name: "Temporary pool" }))
+    page = render(<LibraryPage initialSnapshot={snapshot} />)
+    expect(sessionStorage.getItem("akasha:temporary-pool:root")).toBe('["one"]')
+    fireEvent.click(
+      within(screen.getByRole("complementary")).getByRole("button", {
+        name: "Remove from pool: First asset",
+      })
+    )
     fireEvent.click(
       screen.getByRole("button", { name: "Add to pool: First asset" })
     )
@@ -137,6 +192,7 @@ describe("LibraryPage", () => {
       })
     ).toBeTruthy()
     setItem.mockRestore()
+    getItem.mockRestore()
     page.rerender(
       <LibraryPage
         initialSnapshot={{ ...snapshot, rootFolderId: "other-root" }}
@@ -149,6 +205,91 @@ describe("LibraryPage", () => {
         name: "Open First asset",
       })
     ).toBeNull()
+  })
+
+  it("adds the active preview to the pool with P or its action without closing", () => {
+    const snapshot = {
+      folders: [],
+      rootFolderId: "root",
+      items: [
+        createLibraryItem("one", "First asset"),
+        { ...createLibraryItem("two", "Second asset"), kind: "video" as const },
+      ],
+    }
+    render(<LibraryPage initialSnapshot={snapshot} />)
+    fireEvent.click(screen.getByRole("button", { name: "Open First asset" }))
+    fireEvent.keyDown(window, { key: "p" })
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one"])
+    expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe(
+      "First asset"
+    )
+    expect(
+      screen
+        .getByRole("button", { name: "Added to pool" })
+        .hasAttribute("disabled")
+    ).toBe(true)
+    fireEvent.keyDown(window, { key: "p" })
+    fireEvent.keyDown(window, { key: "ArrowRight" })
+    fireEvent.click(screen.getByRole("button", { name: "Add to pool" }))
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one", "two"])
+    expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe(
+      "Second asset"
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    fireEvent.click(
+      within(screen.getByRole("complementary")).getByRole("button", {
+        name: "Open First asset",
+      })
+    )
+    fireEvent.keyDown(window, { key: "p" })
+    expect(screen.getByRole("button", { name: "Added to pool" })).toBeTruthy()
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one", "two"])
+  })
+
+  it("ignores pool shortcuts outside preview, while typing, or beneath another dialog", () => {
+    render(
+      <LibraryPage
+        initialSnapshot={{
+          folders: [],
+          rootFolderId: "root",
+          items: [createLibraryItem("one", "First asset")],
+        }}
+      />
+    )
+    fireEvent.keyDown(window, { key: "p" })
+    expect(localStorage.getItem("akasha:temporary-pool:root")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Open First asset" }))
+    const dialog = screen.getByRole("dialog")
+    const input = document.createElement("input")
+    dialog.append(input)
+    fireEvent.keyDown(input, { key: "p" })
+    input.remove()
+    for (const modifier of [
+      "ctrlKey",
+      "altKey",
+      "metaKey",
+      "shiftKey",
+      "repeat",
+      "isComposing",
+    ]) {
+      fireEvent.keyDown(window, { key: "p", [modifier]: true })
+    }
+    const other = document.createElement("div")
+    other.setAttribute("role", "dialog")
+    document.body.append(other)
+    fireEvent.keyDown(window, { key: "p" })
+    other.remove()
+    expect(localStorage.getItem("akasha:temporary-pool:root")).toBeNull()
+    fireEvent.keyDown(window, { key: "p" })
+    expect(
+      JSON.parse(localStorage.getItem("akasha:temporary-pool:root")!)
+    ).toEqual(["one"])
   })
 
   it("shows an empty library with a first-folder action", () => {

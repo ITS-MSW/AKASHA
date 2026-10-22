@@ -138,9 +138,11 @@ describe("MediaGallery image loading", () => {
   it("prefetches sustained hover at low priority and keyboard focus immediately", () => {
     vi.useFakeTimers()
     const image = document.createElement("img")
-    const createImage = vi.spyOn(window, "Image").mockImplementation(function () {
-      return image
-    })
+    const createImage = vi
+      .spyOn(window, "Image")
+      .mockImplementation(function () {
+        return image
+      })
     renderGallery([createItem("image")])
     const card = screen.getByRole("button", { name: "Open image reference" })
 
@@ -289,60 +291,78 @@ describe("MediaGallery image loading", () => {
     expect(secondOriginal.className).not.toContain("opacity-0")
   })
 
-  it("zooms toward the pointer while Shift is held", () => {
+  it("keeps pointer-centered inspection across navigation without pointer re-entry", () => {
     renderGallery([
       createItem("image", { id: "first", title: "First" }),
-      createItem("image", {
-        driveFileId: "second-file",
-        id: "second",
-        title: "Second",
-      }),
+      createItem("image", { id: "second", title: "Second" }),
+      createItem("video"),
+      createItem("image", { id: "third", title: "Third" }),
     ])
-
     fireEvent.click(screen.getByRole("button", { name: "Open First" }))
-
-    const original = within(screen.getByRole("dialog")).getByRole("img", {
+    const dialog = screen.getByRole("dialog")
+    let content = within(dialog).getByRole("img", {
       name: "First",
-    })
-    const imageFrame = original.parentElement as HTMLDivElement
-    vi.spyOn(imageFrame, "getBoundingClientRect").mockReturnValue({
-      bottom: 100,
-      height: 100,
+    }).parentElement!
+    let frame = content.parentElement!
+    const bounds = {
       left: 0,
-      right: 200,
-      toJSON: () => ({}),
       top: 0,
+      right: 200,
+      bottom: 100,
       width: 200,
+      height: 100,
       x: 0,
       y: 0,
-    })
+      toJSON: () => ({}),
+    }
+    const measure = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(bounds)
 
-    fireEvent.pointerEnter(imageFrame, { clientX: 150, clientY: 25 })
+    fireEvent.pointerEnter(frame, { clientX: 150, clientY: 25 })
     fireEvent.keyDown(window, { key: "Shift", shiftKey: true })
-
-    expect(imageFrame.style.transform).toBe("scale(2)")
-    expect(imageFrame.style.transformOrigin).toBe("var(--zoom-origin, center)")
-    expect(imageFrame.style.getPropertyValue("--zoom-origin")).toBe("75% 25%")
+    expect(content.style.transform).toBe("scale(2)")
+    expect(content.style.getPropertyValue("--zoom-origin")).toBe("75% 25%")
+    fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true })
+    expect(within(dialog).getByRole("img", { name: "Second" })).toBeTruthy()
+    expect(content.style.transform).toBe("scale(2)")
+    fireEvent.pointerMove(frame, { clientX: 50, clientY: 75, shiftKey: true })
+    expect(content.style.getPropertyValue("--zoom-origin")).toBe("25% 75%")
 
     fireEvent.keyUp(window, { key: "Shift" })
-
-    expect(imageFrame.style.transform).toBe("scale(1)")
-    expect(imageFrame.style.transformOrigin).toBe("center")
-
+    expect(content.style.transform).toBe("scale(1)")
+    measure.mockReturnValue({
+      ...bounds,
+      right: 100,
+      bottom: 200,
+      width: 100,
+      height: 200,
+    })
     fireEvent.keyDown(window, { key: "ArrowRight" })
-
-    const secondOriginal = within(screen.getByRole("dialog")).getByRole(
-      "img",
-      { name: "Second" }
-    )
-    const secondImageFrame = secondOriginal.parentElement as HTMLDivElement
-    vi.spyOn(secondImageFrame, "matches").mockImplementation(
-      (selector) => selector === ":hover"
-    )
-
+    expect(dialog.querySelector("video")).toBeTruthy()
+    fireEvent.keyDown(window, { key: "Alt", altKey: true })
+    fireEvent.keyDown(window, { key: "ArrowRight", altKey: true })
+    content = within(dialog).getByRole("img", { name: "Third" }).parentElement!
+    frame = content.parentElement!
+    expect(within(dialog).getByRole("img", { name: "Third" })).toBeTruthy()
+    expect(content.style.getPropertyValue("--zoom-origin")).toBe("50% 37.5%")
+    expect(content.style.transform).toBe("scale(2)")
+    fireEvent.blur(window)
+    expect(content.style.transform).toBe("scale(1)")
+    fireEvent.keyDown(window, { key: "ArrowLeft" })
+    fireEvent.keyDown(window, { key: "ArrowLeft" })
+    content = within(dialog).getByRole("img", { name: "Second" }).parentElement!
+    frame = content.parentElement!
+    fireEvent.pointerMove(frame, { clientX: 25, clientY: 100, altKey: true })
+    expect(content.style.getPropertyValue("--zoom-origin")).toBe("25% 50%")
+    fireEvent.pointerLeave(frame)
+    expect(content.style.transform).toBe("scale(1)")
+    fireEvent.keyDown(window, { key: "ArrowLeft" })
     fireEvent.keyDown(window, { key: "Shift", shiftKey: true })
-
-    expect(secondImageFrame.style.transform).toBe("scale(2)")
+    expect(
+      within(dialog).getByRole("img", { name: "First" }).parentElement!.style
+        .transform
+    ).toBe("scale(1)")
   })
 
   it("renders every item before lazy image loading begins", () => {

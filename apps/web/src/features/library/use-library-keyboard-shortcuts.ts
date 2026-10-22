@@ -136,8 +136,8 @@ function isCommandPaletteShortcut(event: KeyboardEvent) {
   )
 }
 
-function shouldSkipKeyboardEvent(event: KeyboardEvent) {
-  return event.defaultPrevented || event.repeat
+export function shouldSkipKeyboardEvent(event: KeyboardEvent) {
+  return event.defaultPrevented || event.repeat || event.isComposing
 }
 
 function shouldIgnoreLibraryShortcut(event: KeyboardEvent) {
@@ -148,7 +148,7 @@ function hasCommandModifier(event: KeyboardEvent) {
   return event.metaKey || event.ctrlKey || event.altKey
 }
 
-function isEditingTarget(target: EventTarget | null) {
+export function isEditingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
 
   return (
@@ -164,7 +164,6 @@ function isDialogOpen() {
 
 function isInsideDialog(target: EventTarget | null) {
   return (
-    target instanceof HTMLElement &&
-    Boolean(target.closest('[role="dialog"]'))
+    target instanceof HTMLElement && Boolean(target.closest('[role="dialog"]'))
   )
 }
