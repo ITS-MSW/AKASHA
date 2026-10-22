@@ -1,4 +1,3 @@
-import type { CaptureDraft } from "@akasha/contracts"
 import type { FolderOption } from "./akasha-api"
 
 export type ExtensionRequest =
@@ -6,13 +5,18 @@ export type ExtensionRequest =
   | { type: "akasha:list-folders" }
   | {
       type: "akasha:save"
-      draft: CaptureDraft
+      selectionId: string
+      sourceUrls: string[]
       folderId: string
     }
 
 export type ExtensionResponse<T> = { ok: true; value: T } | { ok: false; error: string }
 
-export type OpenCapturePanelMessage = { type: "akasha:open-capture" }
+export type OpenCapturePanelMessage = {
+  type: "akasha:open-capture"
+  onlyIfPostUrl?: string
+  pageUrl?: string
+}
 
 export async function callExtension<T>(request: ExtensionRequest) {
   const response = (await browser.runtime.sendMessage(request)) as ExtensionResponse<T>
@@ -32,10 +36,11 @@ export function getFolderOptions() {
   return callExtension<FolderOption[]>({ type: "akasha:list-folders" })
 }
 
-export function saveLibraryCapture(draft: CaptureDraft, folderId: string) {
-  return callExtension<{ captureId: string }>({
+export function saveLibraryCapture(selectionId: string, sourceUrls: string[], folderId: string) {
+  return callExtension<{ captureIds: string[] }>({
     type: "akasha:save",
-    draft,
+    selectionId,
+    sourceUrls,
     folderId,
   })
 }

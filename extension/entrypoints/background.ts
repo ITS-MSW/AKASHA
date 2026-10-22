@@ -1,3 +1,4 @@
+import { captureDraftSchema } from "@akasha/contracts"
 import {
   AkashaApiError,
   backfillDuplicateMetadata,
@@ -6,7 +7,7 @@ import {
   listFolderOptions,
   saveCapture,
 } from "@/utils/akasha-api"
-import { createCaptureDraft } from "@/utils/capture"
+import { createCaptureDraft, toCaptureSelection } from "@/utils/capture"
 import { createCaptureResultNotification } from "@/utils/capture-result"
 import type { ExtensionRequest, ExtensionResponse, OpenCapturePanelMessage } from "@/utils/messages"
 import {
@@ -20,7 +21,6 @@ import {
   captureOutboxStorage,
   duplicateBackfillStorage,
   folderOptionsCacheStorage,
-  selectedFolderStorage,
 } from "@/utils/storage"
 
 const CAPTURE_MENU_ID = "stillroom-capture-media"
@@ -51,15 +51,49 @@ export default defineBackground(() => {
       return
     }
 
-    await withStorageMutation(() => captureDraftStorage.setValue(draft))
+    let drafts = [draft]
+    if (tab?.id && /^https:\/\/(www\.)?(x|twitter)\.com\//.test(info.pageUrl ?? "")) {
+      try {
+        const discovered = await browser.tabs.sendMessage(tab.id, {
+          type: "akasha:discover-images",
+          srcUrl: info.srcUrl,
+        })
+        const parsed = captureDraftSchema.array().min(1).max(4).safeParse(discovered)
+        if (
+          parsed.success &&
+          parsed.data.every(
+            (item) => item.kind === "image" && item.pageUrl === parsed.data[0]?.pageUrl
+          )
+        )
+          drafts = parsed.data
+      } catch {
+        // Existing tabs without the content script retain single-image capture.
+      }
+    }
+    await withStorageMutation(() =>
+      captureDraftStorage.setValue({
+        id: crypto.randomUUID(),
+        items: drafts.map((item) => ({ draft: item, captureId: crypto.randomUUID() })),
+        origin:
+          drafts.length > 1 && tab?.id && info.pageUrl && drafts[0]
+            ? { tabId: tab.id, pageUrl: info.pageUrl, postUrl: drafts[0].pageUrl }
+            : undefined,
+      })
+    )
 
     await openCapturePanel(tab?.id)
   })
 
   // Video capture is postponed. Keep the toolbar useful without presenting a
   // capture path that the product cannot complete reliably.
-  browser.action.onClicked.addListener(() => {
-    void showCaptureNotification("Save an image", "Right-click an image and choose Save to Akasha.")
+  browser.action.onClicked.addListener(async () => {
+    const failed = (await captureOutboxStorage.getValue()).find((job) => job.status === "failed")
+    if (failed) await restoreFailedCapture(failed.batchId ?? failed.captureId)
+    else
+      await showCaptureNotification(
+        "Save an image",
+        "Right-click an image and choose Save to Akasha."
+      )
   })
   browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === OUTBOX_ALARM_NAME) void processOutbox()
@@ -163,11 +197,8 @@ async function handleExtensionRequest(
     }
 
     if (message.type === "akasha:save") {
-      if (message.draft.kind !== "image") {
-        return { ok: false, error: "Video capture is currently unavailable." }
-      }
-      const captureId = await enqueueCapture(message.draft, message.folderId)
-      return { ok: true, value: { captureId } }
+      const captureIds = await enqueueCaptures(message)
+      return { ok: true, value: { captureIds } }
     }
 
     return { ok: false, error: "Akasha could not complete that action." }
@@ -179,21 +210,70 @@ async function handleExtensionRequest(
   }
 }
 
-async function enqueueCapture(
-  draft: Parameters<typeof createCaptureOutboxJob>[0],
-  folderId: string
-) {
-  const job = createCaptureOutboxJob(draft, folderId)
-
-  await withStorageMutation(async () => {
+async function enqueueCaptures(message: Extract<ExtensionRequest, { type: "akasha:save" }>) {
+  const captureIds = await withStorageMutation(async () => {
+    const selection = toCaptureSelection(await captureDraftStorage.getValue())
+    if (!selection || selection.id !== message.selectionId || !message.folderId)
+      throw new Error("Open the image and try again.")
+    const selected = selection.items.filter((item) =>
+      message.sourceUrls.includes(item.draft.sourceUrl)
+    )
+    if (!selected.length || selected.some((item) => item.draft.kind !== "image"))
+      throw new Error("Choose an image to save.")
     const jobs = await captureOutboxStorage.getValue()
-    await captureOutboxStorage.setValue([...jobs, job])
-    await captureDraftStorage.removeValue()
+    const added: CaptureOutboxJob[] = []
+    const retried = new Set<string>()
+    for (const item of selected) {
+      const existing = item.captureId
+        ? jobs.find((job) => job.captureId === item.captureId)
+        : undefined
+      if (existing && existing.status !== "failed") continue
+      if (selection.folderId && !existing) continue
+      const job = existing
+        ? {
+            ...existing,
+            attempt: 0,
+            errorMessage: undefined,
+            folderId: message.folderId,
+            nextAttemptAt: Date.now(),
+            status: "pending" as const,
+            reported: false,
+          }
+        : {
+            ...createCaptureOutboxJob(item.draft, message.folderId, { captureId: item.captureId }),
+            batchId: selection.items.length > 1 ? selection.id : undefined,
+            origin: selection.origin,
+          }
+      added.push(job)
+      retried.add(job.captureId)
+    }
+    if (!added.length) {
+      const accepted = selected.flatMap((item) =>
+        item.captureId && jobs.some((job) => job.captureId === item.captureId)
+          ? [item.captureId]
+          : []
+      )
+      if (accepted.length) return accepted
+      throw new Error("These images are no longer waiting for retry.")
+    }
+    const batchIds = new Set(added.map((job) => job.batchId).filter(Boolean))
+    await captureOutboxStorage.setValue([
+      ...jobs
+        .filter((job) => !retried.has(job.captureId))
+        .map((job) => (batchIds.has(job.batchId) ? { ...job, reported: false } : job)),
+      ...added,
+    ])
+    await captureDraftStorage.removeValue().catch(() => undefined)
+    await Promise.all(
+      [...new Set(added.map((job) => job.batchId ?? job.captureId))].map((id) =>
+        browser.notifications.clear(`${FAILED_NOTIFICATION_PREFIX}${id}`).catch(() => undefined)
+      )
+    )
+    return added.map((job) => job.captureId)
   })
-
   await scheduleNextOutboxAlarm()
   queueMicrotask(() => void processOutbox())
-  return job.captureId
+  return captureIds
 }
 
 function processOutbox() {
@@ -213,9 +293,15 @@ async function drainOutbox() {
 
     try {
       const result = await saveCapture(job.draft, job.folderId, job.captureId, job.attempt)
-      await removeOutboxJob(job.captureId)
-      const notification = createCaptureResultNotification(result.outcome, job.draft.title)
-      await showCaptureNotification(notification.title, notification.message).catch(() => undefined)
+      if (job.batchId) {
+        await replaceOutboxJob({ ...job, status: result.outcome })
+      } else {
+        await removeOutboxJob(job.captureId)
+        const notification = createCaptureResultNotification(result.outcome, job.draft.title)
+        await showCaptureNotification(notification.title, notification.message).catch(
+          () => undefined
+        )
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Akasha could not save this item."
       const retryable = !(error instanceof AkashaApiError) || error.retryable
@@ -229,7 +315,7 @@ async function drainOutbox() {
 
       await replaceOutboxJob(updatedJob)
 
-      if (updatedJob.status === "failed") {
+      if (updatedJob.status === "failed" && !updatedJob.batchId) {
         await showFailedCaptureNotification(updatedJob).catch(() => undefined)
       }
     }
@@ -237,7 +323,56 @@ async function drainOutbox() {
     job = await takeNextReadyJob()
   }
 
-  await scheduleNextOutboxAlarm()
+  try {
+    await reportSettledBatches()
+  } finally {
+    await scheduleNextOutboxAlarm()
+  }
+}
+
+async function reportSettledBatches() {
+  const jobs = await captureOutboxStorage.getValue()
+  const batchIds = new Set(jobs.flatMap((job) => (job.batchId ? [job.batchId] : [])))
+  for (const batchId of batchIds) {
+    const group = await withStorageMutation(async () => {
+      const current = await captureOutboxStorage.getValue()
+      const batch = current.filter((job) => job.batchId === batchId)
+      if (
+        !batch.length ||
+        batch.some((job) => job.status === "pending") ||
+        batch.every((job) => job.reported)
+      )
+        return []
+      return batch
+    })
+    if (!group.length) continue
+    const failed = group.filter((job) => job.status === "failed")
+    const first = failed[0]
+    if (first) {
+      const reopened = await restoreFailedCapture(batchId, true).catch(() => false)
+      if (!reopened) await showFailedCaptureNotification(first, failed.length)
+    } else {
+      const saved = group.filter((job) => job.status === "saved").length
+      await showCaptureNotification(
+        "Saved to Akasha",
+        `${saved} saved · ${group.length - saved} already saved`
+      )
+    }
+    // Keep terminal outcomes durable until recovery or notification completes.
+    await withStorageMutation(async () => {
+      const current = await captureOutboxStorage.getValue()
+      if (current.some((job) => job.batchId === batchId && job.status === "pending")) return
+      await captureOutboxStorage.setValue(
+        current.flatMap((job) =>
+          job.batchId !== batchId
+            ? [job]
+            : job.status === "failed"
+              ? [{ ...job, reported: true }]
+              : []
+        )
+      )
+    })
+  }
 }
 
 function processDedupeBackfill() {
@@ -332,10 +467,17 @@ async function removeOutboxJob(captureId: string) {
 async function scheduleNextOutboxAlarm() {
   const jobs = await captureOutboxStorage.getValue()
   const nextAttemptAt = jobs
-    .filter((job) => job.draft.kind === "image" && job.status === "pending")
+    .filter(
+      (job) =>
+        job.draft.kind === "image" && (job.status === "pending" || (job.batchId && !job.reported))
+    )
     .reduce<number | null>(
       (earliest, job) =>
-        earliest === null ? job.nextAttemptAt : Math.min(earliest, job.nextAttemptAt),
+        earliest === null
+          ? job.status === "pending"
+            ? job.nextAttemptAt
+            : Date.now() + 60_000
+          : Math.min(earliest, job.status === "pending" ? job.nextAttemptAt : Date.now() + 60_000),
       null
     )
 
@@ -349,34 +491,55 @@ async function scheduleNextOutboxAlarm() {
   })
 }
 
-async function restoreFailedCapture(captureId: string) {
-  const restoredJob = await withStorageMutation(async () => {
-    const jobs = await captureOutboxStorage.getValue()
-    const job = jobs.find(
-      (candidate) =>
-        candidate.draft.kind === "image" &&
-        candidate.captureId === captureId &&
-        candidate.status === "failed"
-    )
-
-    if (!job) return null
-
-    await captureDraftStorage.setValue(job.draft)
-    await selectedFolderStorage.setValue(job.folderId)
-    await captureOutboxStorage.setValue(
-      jobs.filter((candidate) => candidate.captureId !== captureId)
-    )
-    return job
+async function restoreFailedCapture(captureId: string, automatic = false) {
+  const jobs = await captureOutboxStorage.getValue()
+  const failed = jobs.filter(
+    (job) =>
+      job.draft.kind === "image" &&
+      (job.batchId === captureId || job.captureId === captureId) &&
+      job.status === "failed"
+  )
+  const first = failed[0]
+  if (!first) return false
+  const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true })
+  if (!activeTab?.id) return false
+  const origin = first.origin
+  if (automatic && (!origin || activeTab.id !== origin.tabId)) return false
+  const selection = {
+    id: crypto.randomUUID(),
+    items: failed.map((job) => ({ draft: job.draft, captureId: job.captureId })),
+    folderId: first.folderId,
+    errorMessage: first.errorMessage,
+    origin: first.origin,
+  }
+  // Opening recovery must never replace an unsaved capture.
+  const restored = await withStorageMutation(async () => {
+    if (await captureDraftStorage.getValue()) return false
+    await captureDraftStorage.setValue(selection)
+    return true
   })
-
-  if (!restoredJob) return
-
-  await browser.notifications.clear(`${FAILED_NOTIFICATION_PREFIX}${captureId}`)
-  const [activeTab] = await browser.tabs.query({
-    active: true,
-    currentWindow: true,
-  })
-  await openCapturePanel(activeTab?.id)
+  if (!restored) {
+    if (!automatic) await openCapturePanel(activeTab.id)
+    return false
+  }
+  if (automatic && origin) {
+    const response = await browser.tabs
+      .sendMessage(activeTab.id, {
+        type: "akasha:open-capture",
+        onlyIfPostUrl: origin.postUrl,
+        pageUrl: origin.pageUrl,
+      })
+      .catch(() => null)
+    if (response?.ok !== true) {
+      await withStorageMutation(async () => {
+        const current = toCaptureSelection(await captureDraftStorage.getValue())
+        if (current?.id === selection.id) await captureDraftStorage.removeValue()
+      })
+    }
+    return response?.ok === true
+  }
+  await openCapturePanel(activeTab.id)
+  return true
 }
 
 async function getFolderOptions() {
@@ -424,13 +587,16 @@ function withStorageMutation<T>(operation: () => Promise<T>) {
   return result
 }
 
-async function showFailedCaptureNotification(job: CaptureOutboxJob) {
-  await browser.notifications.create(`${FAILED_NOTIFICATION_PREFIX}${job.captureId}`, {
-    iconUrl: browser.runtime.getURL("/icon/128.png"),
-    message: `${job.errorMessage ?? "Akasha could not save this item."} Click to try again.`,
-    title: "Save needs attention",
-    type: "basic",
-  })
+async function showFailedCaptureNotification(job: CaptureOutboxJob, count = 1) {
+  await browser.notifications.create(
+    `${FAILED_NOTIFICATION_PREFIX}${job.batchId ?? job.captureId}`,
+    {
+      iconUrl: browser.runtime.getURL("/icon/128.png"),
+      message: `${count > 1 ? `${count} images need attention. ` : ""}${job.errorMessage ?? "Akasha could not save this item."} Click to try again.`,
+      title: "Save needs attention",
+      type: "basic",
+    }
+  )
 }
 
 async function showCaptureNotification(title: string, message: string) {

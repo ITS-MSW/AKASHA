@@ -64,14 +64,18 @@
       "version": "0.1.0",
       "dependencies": {
         "@akasha/contracts": "workspace:*",
+        "@heroui/react": "3.2.4",
+        "@heroui/styles": "3.2.4",
         "@phosphor-icons/react": "^2.1.10",
         "react": "^19.2.6",
         "react-dom": "^19.2.6",
       },
       "devDependencies": {
+        "@tailwindcss/vite": "4.3.3",
         "@types/react": "^19.2.14",
         "@types/react-dom": "^19.2.3",
         "@wxt-dev/module-react": "^1.1.5",
+        "tailwindcss": "4.3.3",
         "typescript": "^5.9.3",
         "vitest": "^4.1.10",
         "web-ext": "^10.5.0",

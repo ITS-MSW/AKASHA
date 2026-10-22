@@ -30,3 +30,19 @@ export function createCaptureDraft(
     width: context.width,
   })
 }
+
+export type CaptureSelection = {
+  id: string
+  items: { draft: CaptureDraft; captureId?: string }[]
+  folderId?: string
+  errorMessage?: string
+  origin?: { tabId: number; pageUrl: string; postUrl: string }
+}
+
+export function toCaptureSelection(
+  value: CaptureSelection | CaptureDraft | null
+): CaptureSelection | null {
+  if (!value) return null
+  if ("items" in value) return value
+  return value.kind === "image" ? { id: value.sourceUrl, items: [{ draft: value }] } : null
+}
