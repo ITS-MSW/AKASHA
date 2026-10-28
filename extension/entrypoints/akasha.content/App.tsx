@@ -13,7 +13,12 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import type { FolderOption } from "@/utils/akasha-api"
 import { type CaptureSelection, toCaptureSelection } from "@/utils/capture"
-import { connectLibrary, getFolderOptions, saveLibraryCapture } from "@/utils/messages"
+import {
+  connectLibrary,
+  ExtensionCallError,
+  getFolderOptions,
+  saveLibraryCapture,
+} from "@/utils/messages"
 import { captureDraftStorage, selectedFolderStorage } from "@/utils/storage"
 
 type SaveStatus = "idle" | "saving"
@@ -26,9 +31,12 @@ export default function App({ onClose }: { onClose: () => void }) {
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
+  const [needsConnection, setNeedsConnection] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle")
   const [folderPickerOpen, setFolderPickerOpen] = useState(false)
   const comboboxRef = useRef<HTMLDivElement>(null)
+  const needsRefresh = Boolean(libraryError || errorMessage)
 
   const applyFolders = useCallback(
     (availableFolders: FolderOption[], storedFolderId: string | null) => {
@@ -42,24 +50,43 @@ export default function App({ onClose }: { onClose: () => void }) {
     []
   )
 
+  const loadLibrary = useCallback(
+    async (folderId: string | null, refresh = false) => {
+      setIsLoading(true)
+      setLibraryError(null)
+      setFolderPickerOpen(false)
+      try {
+        const availableFolders = await getFolderOptions(refresh)
+        applyFolders(availableFolders, folderId)
+        setIsConnected(true)
+        setNeedsConnection(false)
+        if (refresh) setErrorMessage(null)
+      } catch (error) {
+        const unauthorized = error instanceof ExtensionCallError && error.status === 401
+        setNeedsConnection(unauthorized)
+        if (unauthorized) setIsConnected(false)
+        setLibraryError(unauthorized ? null : "Could not refresh your library. Try again.")
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [applyFolders]
+  )
+
   useEffect(() => {
     async function initialize() {
-      const [storedDraft, storedFolderId] = await Promise.all([
-        captureDraftStorage.getValue(),
-        selectedFolderStorage.getValue(),
-      ])
-      const next = toCaptureSelection(storedDraft)
-      setSelection(next)
-      setErrorMessage(next?.errorMessage ?? null)
-      setSelectedSources(new Set(next?.items.map((item) => item.draft.sourceUrl)))
-
       try {
-        const availableFolders = await getFolderOptions()
-        applyFolders(availableFolders, next?.folderId ?? storedFolderId)
-        setIsConnected(true)
+        const [storedDraft, storedFolderId] = await Promise.all([
+          captureDraftStorage.getValue(),
+          selectedFolderStorage.getValue(),
+        ])
+        const next = toCaptureSelection(storedDraft)
+        setSelection(next)
+        setErrorMessage(next?.errorMessage ?? null)
+        setSelectedSources(new Set(next?.items.map((item) => item.draft.sourceUrl)))
+        await loadLibrary(next?.folderId ?? storedFolderId)
       } catch {
-        setIsConnected(false)
-      } finally {
+        setLibraryError("Could not open this capture. Close Akasha and try again.")
         setIsLoading(false)
       }
     }
@@ -73,7 +100,7 @@ export default function App({ onClose }: { onClose: () => void }) {
       if (next?.folderId) setSelectedFolderId(next.folderId)
       setSaveStatus("idle")
     })
-  }, [applyFolders])
+  }, [loadLibrary])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -102,25 +129,41 @@ export default function App({ onClose }: { onClose: () => void }) {
   }, [folderPickerOpen])
 
   async function handleConnect() {
+    if (isLoading || saveStatus === "saving") return
     setIsLoading(true)
-    setErrorMessage(null)
+    setLibraryError(null)
 
     try {
       const availableFolders = await connectLibrary()
       applyFolders(
         availableFolders,
-        selection?.folderId ?? (await selectedFolderStorage.getValue())
+        selectedFolderId || selection?.folderId || (await selectedFolderStorage.getValue())
       )
       setIsConnected(true)
+      setNeedsConnection(false)
+      setErrorMessage(null)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Akasha could not connect.")
+      setNeedsConnection(true)
+      setLibraryError(error instanceof Error ? error.message : "Akasha could not connect.")
     } finally {
       setIsLoading(false)
     }
   }
 
+  async function handleRefresh() {
+    if (isLoading || saveStatus === "saving") return
+    await loadLibrary(selectedFolderId || selection?.folderId || null, true)
+  }
+
   async function handleSave() {
-    if (!selection || !selectedFolderId || !selectedSources.size) return
+    if (
+      !selection ||
+      !selectedFolderId ||
+      !selectedSources.size ||
+      isLoading ||
+      saveStatus === "saving"
+    )
+      return
 
     setSaveStatus("saving")
     setErrorMessage(null)
@@ -168,11 +211,15 @@ export default function App({ onClose }: { onClose: () => void }) {
           ) : !isConnected ? (
             <section className="connection-state">
               <div>
-                <h1>Connect Akasha</h1>
-                <p>Save media to your library.</p>
+                <h1>{needsConnection ? "Connect Akasha" : "Library unavailable"}</h1>
+                {needsConnection ? <p>Save media to your library.</p> : null}
               </div>
-              <button className="primary-button" onClick={handleConnect} type="button">
-                Connect Akasha
+              <button
+                className="primary-button"
+                onClick={needsConnection ? handleConnect : handleRefresh}
+                type="button"
+              >
+                {needsConnection ? "Connect Akasha" : "Refresh"}
               </button>
             </section>
           ) : selection?.items.length ? (
@@ -226,8 +273,11 @@ export default function App({ onClose }: { onClose: () => void }) {
               />
               <button
                 className="primary-button"
-                disabled={!selectedFolderId || !selectedSources.size || saveStatus === "saving"}
-                onClick={handleSave}
+                disabled={
+                  saveStatus === "saving" ||
+                  (!needsRefresh && (!selectedFolderId || !selectedSources.size))
+                }
+                onClick={needsRefresh ? handleRefresh : handleSave}
                 type="button"
               >
                 {saveStatus === "saving" ? (
@@ -235,11 +285,13 @@ export default function App({ onClose }: { onClose: () => void }) {
                 ) : null}
                 {saveStatus === "saving"
                   ? "Queueing"
-                  : selection.folderId
-                    ? "Retry failed"
-                    : selection.items.length > 1
-                      ? `Save ${selectedSources.size} image${selectedSources.size === 1 ? "" : "s"}`
-                      : "Save"}
+                  : needsRefresh
+                    ? "Refresh"
+                    : selection.folderId
+                      ? "Retry failed"
+                      : selection.items.length > 1
+                        ? `Save ${selectedSources.size} image${selectedSources.size === 1 ? "" : "s"}`
+                        : "Save"}
               </button>
             </>
           ) : (
@@ -249,9 +301,9 @@ export default function App({ onClose }: { onClose: () => void }) {
             </section>
           )}
 
-          {errorMessage ? (
+          {libraryError || errorMessage ? (
             <p className="error-message" role="alert">
-              {errorMessage}
+              {libraryError || errorMessage}
             </p>
           ) : null}
         </div>
