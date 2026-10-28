@@ -226,7 +226,7 @@ async function handleExtensionRequest(
     }
 
     if (message.type === "akasha:list-folders") {
-      return { ok: true, value: await getFolderOptions() }
+      return { ok: true, value: await getFolderOptions(message.refresh) }
     }
 
     if (message.type === "akasha:save") {
@@ -239,6 +239,7 @@ async function handleExtensionRequest(
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Akasha could not complete that action.",
+      status: error instanceof AkashaApiError ? error.status : undefined,
     }
   }
 }
@@ -571,11 +572,13 @@ async function restoreFailedCapture(captureId: string, automatic = false) {
   return true
 }
 
-async function getFolderOptions() {
+async function getFolderOptions(refresh = false) {
   if (!(await hasAkashaCredential())) {
     await folderOptionsCacheStorage.removeValue()
-    throw new Error("Connect Akasha to continue.")
+    throw new AkashaApiError("Connect Akasha to continue.", 401)
   }
+
+  if (refresh) return refreshFolderOptions()
 
   const cached = await folderOptionsCacheStorage.getValue()
 
